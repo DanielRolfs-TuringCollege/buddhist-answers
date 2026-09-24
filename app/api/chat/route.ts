@@ -2,12 +2,17 @@ import { z } from "zod";
 import { chroma, COLLECTION_NAME } from "@/lib/chroma";
 import { embeddings } from "@/lib/llm";
 import { selectPassages, toSegments } from "@/lib/passages";
+import { rewriteQuestion } from "@/lib/rewrite";
 
 const TOP_K = 5;
 
+const questionSchema = z.string().trim().min(1, "Question is empty").max(500, "Question is too long");
+
 // The body comes from the browser, so it is untrusted: check it at runtime.
 const requestSchema = z.object({
-  text: z.string().trim().min(1, "Question is empty").max(500, "Question is too long"),
+  text: questionSchema,
+  // Earlier questions of this chat, oldest first. Limited to keep prompts small.
+  history: z.array(questionSchema).max(10, "History is too long").default([]),
 });
 
 // Chroma metadata is untyped at runtime, so check the fields we rely on.
@@ -38,10 +43,12 @@ export async function POST(request: Request) {
     return Response.json({ error: z.prettifyError(parsed.error) }, { status: 400 });
   }
 
-  // 2. Search and highlight. If OpenRouter or Chroma fails, that's our
+  // 2. Rewrite, search and highlight. If OpenRouter or Chroma fails, that's our
   //    fault → 500, with details only in the server log.
   try {
-    const embedding = await embeddings.embedQuery(parsed.data.text);
+    // Search with a standalone English question, not the raw (maybe follow-up) text.
+    const rewritten = await rewriteQuestion(parsed.data.text, parsed.data.history);
+    const embedding = await embeddings.embedQuery(rewritten);
 
     const collection = await chroma.getCollection({ name: COLLECTION_NAME });
     const result = await collection.query({
@@ -58,7 +65,7 @@ export async function POST(request: Request) {
       ...metadataSchema.parse(row.metadata),
     }));
 
-    const passages = await selectPassages(parsed.data.text, sources);
+    const passages = await selectPassages(rewritten, sources);
 
     // Keep only sources with at least one passage that answers the question.
     const relevantSources = sources
@@ -68,7 +75,7 @@ export async function POST(request: Request) {
         return { n, question, url, tags, segments: toSegments(answer, highlights) };
       });
 
-    return Response.json({ sources: relevantSources });
+    return Response.json({ rewritten, sources: relevantSources });
   } catch (error) {
     console.error("[chat] request failed:", error);
     return Response.json(

@@ -6,8 +6,13 @@ import { type Source, SourceCard } from "@/components/source-card";
 type Message = {
   id: number;
   text: string;
+  // The standalone English question that was actually searched.
+  rewritten: string;
   sources: Source[];
 };
+
+// How many earlier questions are sent along, so follow-ups can be understood.
+const HISTORY_LENGTH = 4;
 
 export default function Home() {
   const [message, setMessage] = useState("");
@@ -25,11 +30,14 @@ export default function Home() {
     setIsLoading(true);
     setError(null);
 
-    let data: { sources: Source[] };
+    let data: { rewritten: string; sources: Source[] };
 
     try {
       const response = await fetch("/api/chat", {
-        body: JSON.stringify({ text: message.trim() }),
+        body: JSON.stringify({
+          text: message.trim(),
+          history: messages.slice(-HISTORY_LENGTH).map((earlier) => earlier.text),
+        }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });
@@ -78,6 +86,9 @@ export default function Home() {
                 <div className="ml-auto max-w-[85%] rounded-2xl rounded-br-sm bg-amber-700 px-4 py-3 text-white">
                   {currentMessage.text}
                 </div>
+                <p className="text-right text-xs text-stone-500">
+                  Searched for: {currentMessage.rewritten}
+                </p>
                 {currentMessage.sources.length === 0 ? (
                   <p className="max-w-[85%] rounded-2xl rounded-bl-sm bg-white px-4 py-3 text-stone-700">
                     There&apos;s no answer from Lama Ole on this topic in the collection.
