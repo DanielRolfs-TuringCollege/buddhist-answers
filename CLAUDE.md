@@ -4,9 +4,9 @@
 
 "Ask Lama Ole": a Next.js RAG chatbot over Lama Ole Nydahl's published Q&A collection (Turing College sprint project).
 
-- **Task / requirements:** [task.md](task.md). The grading criteria live here.
-- **Plan / architecture:** [plan.md](plan.md), the single source of truth for decisions (stack, pipeline, tools, SSE events, eval).
-- **Learning notes:** [learned.md](learned.md), written by the user. Don't edit it unless asked.
+- **Task / requirements:** [overview/task.md](overview/task.md). The grading criteria live here.
+- **Plan / architecture:** [overview/plan.md](overview/plan.md), the single source of truth for decisions (stack, pipeline, tools, SSE events, eval).
+- **Learning notes:** [overview/learned.md](overview/learned.md), written by the user. Don't edit it unless asked.
 
 Chosen optional tasks: citations (easy), prompt injection protection (medium), tool-call result visualisation in a popover (medium), RAGAs evaluation (hard).
 
