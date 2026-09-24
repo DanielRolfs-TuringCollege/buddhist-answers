@@ -1,6 +1,6 @@
 # Plan: "Ask Lama Ole" – RAG Chat over the Q&A Collection
 
-A chat app that answers questions using Lama Ole Nydahl's published answers, always shows the original sources, and uses three tools to find answers more effectively.
+A chat app that answers questions by showing Lama Ole Nydahl's published Q&As in full, highlights the passages that answer the question, and uses three tools to find answers more effectively. The app never writes an answer in its own words.
 
 Data source: https://lama-ole-nydahl.org/questions/ (≈ 278 Q&As, WordPress)
 
@@ -9,14 +9,14 @@ Data source: https://lama-ole-nydahl.org/questions/ (≈ 278 Q&As, WordPress)
 ## 1. Goal
 
 - Answer user questions **only** from the stored Q&A collection.
-- Show **every source** as a link to the original page (citations `[1]`, `[2]`).
+- Show each relevant Q&A **in full** with a link to the original page, and **highlight** the passages that answer the question (word for word, never paraphrased).
 - Use **3 tools** so the LLM can pick the right way to search.
 - Rewrite each question before searching (**query translation**), so follow-ups and German questions work.
 - Say clearly when the collection has **no matching answer** instead of inventing one.
 - Protect against **prompt injection** (nobody can make the bot "speak as Lama Ole" without sources).
 - Measure quality with **RAGAs**.
 
-Answers are **always in English** (German questions are accepted, but get English answers).
+The sources are in English. German questions are accepted (query translation turns them into English search queries).
 
 ---
 
@@ -85,10 +85,11 @@ User message + chat history
 4. Agent (LLM + 3 tools, max 5 tool calls; parallel calls allowed)
    │  LLM requests tool calls ──► backend runs them ──► results back to LLM
    ▼
-5. Answer with [n] citations (streamed token by token)
+5. Highlight: an LLM picks word-for-word passages per source (structured output),
+   │  the server keeps only passages that really appear in the source text
    │
    ▼
-6. Sources, tool results, and a done event are sent to the UI
+6. Sources (full text + highlights), tool results, and a done event are sent to the UI
 ```
 
 Every step sends SSE events, so the UI can show progress (see §8).
@@ -125,16 +126,18 @@ Tool arguments are validated with Zod. Tool errors are caught and returned to th
 
 ---
 
-## 7. Answer rules (system prompt) & citations
+## 7. Passage selection rules (system prompt) & highlights
 
-1. Answer only from tool results. No outside knowledge about the teachings.
-2. Every statement gets a numbered reference `[1]`, `[2]` that maps to a source.
-3. Show at least one short original quote per source; mark summaries as the assistant's own wording.
-4. **Similarity threshold:** if the best score is below the threshold (tune on test questions), reply:
-   *"There's no answer from Lama Ole on this topic in the collection."* and suggest related topics via `list_topics()`.
-5. Use a tag filter only with names returned by `list_topics()`.
-6. Max 5 tool calls per question (loop safeguard).
-7. Always answer in English.
+Instead of a generated answer, the user sees the original Q&As with the answering passages highlighted (`lib/passages.ts`).
+
+1. Select passages only from the retrieved sources. Copy them word for word: never change, shorten, or combine text.
+2. At most 2 passages per source: the most direct ones.
+3. Only include sources that really answer the question; sources without a passage are not shown.
+4. The LLM replies with structured output (`{ passages: [{ n, text }] }`, Zod schema, `strict: true`). The server drops every passage that does not appear verbatim in its source, so a highlight can never contain words he didn't say.
+5. **Similarity threshold:** if the best score is below the threshold (tune on test questions), reply:
+   *"There's no answer from Lama Ole on this topic in the collection."* (also shown when no source gets a passage) and suggest related topics via `list_topics()`.
+6. Use a tag filter only with names returned by `list_topics()`.
+7. Max 5 tool calls per question (loop safeguard).
 
 ---
 
@@ -143,12 +146,12 @@ Tool arguments are validated with Zod. Tool errors are caught and returned to th
 The route `POST /api/chat` returns `text/event-stream`. Event types:
 
 ```
-event: status      data: {"step": "guard" | "rewrite" | "agent" | "answer"}
+event: status      data: {"step": "guard" | "rewrite" | "agent" | "highlight"}
 event: rewrite     data: {"original": "and jealousy?", "rewritten": "What does Lama Ole say about jealousy…?"}
 event: tool_start  data: {"id": "t1", "name": "search_answers", "args": {"query": "jealousy", "tag": null}}
 event: tool_end    data: {"id": "t1", "result": [...]}          // full result, used by the popover
-event: token       data: {"text": "Lama"}
-event: sources     data: [{"n": 1, "question": "...", "url": "...", "tags": [...], "quote": "...", "score": 0.82}]
+event: sources     data: [{"n": 1, "question": "...", "url": "...", "tags": [...], "score": 0.82,
+                           "segments": [{"text": "...", "highlight": false}, {"text": "...", "highlight": true}]}]
 event: blocked     data: {"reason": "injection" | "off_topic", "message": "..."}
 event: error       data: {"message": "..."}
 event: done        data: {"no_match": false}
@@ -186,15 +189,14 @@ Attack prompts are added to the eval set to show the defences work (§12).
 │ Dreams (18)          │  [Searched "Anger"] [Searched "Partnership"] │
 │ Faithfulness (19)    │        ▲ click → popover with tool result    │
 │ …                    │                                              │
-│                      │  Lama Ole recommends seeing anger as … [1]   │
-│ Show all answers     │  In partnerships, he suggests … [2]          │
-│ for a topic          │                                              │
-│                      │  Sources                                     │
 │                      │  ┌──────────────────────────────────────┐    │
-│                      │  │ [1] How should I deal with anger?    │    │
-│                      │  │ "…short original quote…"             │    │
-│                      │  │ Anger · Emotions   Open original page│    │
+│ Show all answers     │  │ How should I deal with anger?        │    │
+│ for a topic          │  │ Full original answer … ▓highlighted  │    │
+│                      │  │ passage that answers the question▓ … │    │
+│                      │  │ … rest of the answer.                │    │
+│                      │  │ Anger · Emotions  Open original page↗│    │
 │                      │  └──────────────────────────────────────┘    │
+│                      │  (one card per relevant Q&A)                 │
 │                      │                                              │
 │                      │  Related questions                           │
 │                      │  • Why do we get angry at those we love?     │
@@ -211,13 +213,12 @@ On mobile, the topic sidebar becomes a "Topics" button that opens a sheet.
 
 | UI element | Purpose | Backed by |
 |---|---|---|
-| Chat window | Main question/answer flow | SSE `token` events |
+| Chat window | Main question/answer flow | SSE `sources` event |
 | Progress steps (Checked → Rewritten → Searching → Writing) | Progress indicator for long operations | SSE `status` events |
 | "Searched for: …" line | Shows the rewritten question | SSE `rewrite` event |
 | Tool chips ("Searched 'Anger'") | Shows which tools ran | SSE `tool_start` / `tool_end` |
 | **Tool popover** (click on a chip) | Visualises the tool result (see below) | `tool_end.result` |
-| Numbered references `[1]` in the text | Click scrolls to / highlights the matching source card | `sources[].n` |
-| Source cards | Question title, short quote, tags, link to original page | SSE `sources` |
+| Source cards | Question title, full answer with highlighted passages, tags, link to original page | SSE `sources` (`segments`) |
 | "Open original page" link | Lets users verify the answer on the real website | `url` metadata |
 | Topic sidebar with counts | Browse and explore | `list_topics()` |
 | Clicking a topic | Shows all questions for that tag as a list of links | `list_by_tag(tag)` |
@@ -236,7 +237,8 @@ On mobile, the topic sidebar becomes a "Topics" button that opens a sheet.
 
 ### UX details
 
-- Quotes are visually different from the assistant's summary (e.g. indented, different text style), so users see what is original.
+- Highlighted passages are clearly marked (`<mark>`), and the rest of the answer stays readable around them.
+- Header and question input stay visible while scrolling.
 - Source cards show the publish date; data fetch date appears in a footer ("Data from lama-ole-nydahl.org, fetched 2026-09-24").
 - Empty start screen: three example questions as clickable suggestions plus the topic list.
 - Keyboard accessible: Enter sends, visible focus on links, chips, and popovers.
@@ -274,7 +276,7 @@ For each, note the expected source URL(s) / expected tool / expected behaviour.
 3. **No-match correctness:** do out-of-scope questions get the no-match reply?
 4. **Injection block rate:** are attacks blocked by the guard?
 
-`eval/run.ts` runs every question through the pipeline and writes `eval/results.json` (question, rewritten question, retrieved contexts, answer, reference answer, tools used).
+`eval/run.ts` runs every question through the pipeline and writes `eval/results.json` (question, rewritten question, retrieved contexts, answer = the highlighted passages joined, reference answer, tools used).
 
 ### RAGAs (Python, `eval/ragas_eval.py`)
 
@@ -282,12 +284,12 @@ Reads `eval/results.json` and scores it with the `ragas` library (LLM judge via 
 
 | Metric | Question it answers |
 |---|---|
-| Faithfulness | Is every claim in the answer supported by the retrieved sources? |
-| Answer relevancy | Does the answer address the question? |
+| Faithfulness | Is every claim in the answer supported by the retrieved sources? (Close to 1 by design, since highlights are verbatim: a sanity check.) |
+| Answer relevancy | Do the highlighted passages address the question? |
 | Context precision | Were the retrieved sources relevant and ranked well? |
 | Context recall | Were all sources needed for the reference answer retrieved? |
 
-Compare **plain pipeline** (always search → answer) vs. **agent with 3 tools**, and **with vs. without query rewrite**.
+Compare **plain pipeline** (always search → highlight) vs. **agent with 3 tools**, and **with vs. without query rewrite**.
 
 ---
 
@@ -302,6 +304,8 @@ components/                 chat, source cards, tool popover, sidebar (+ compone
 lib/
   env.ts                    validated environment variables
   llm.ts                    ChatOpenAI + OpenAIEmbeddings configured for OpenRouter
+  chroma.ts                 shared Chroma client + collection name
+  passages.ts               LLM passage selection + splitting answers into highlight segments
   validation.ts             Zod schemas
   guard.ts                  guard classifier
   rewrite.ts                query translation
@@ -328,11 +332,11 @@ Each milestone is split into small steps; every step = one micro commit.
 1. **Setup:** Next.js + Tailwind + shadcn/ui, `.env.local`, Chroma in Docker.
 2. **Data:** fetch via API → `qa.jsonl` (check a few entries by hand).
 3. **Index:** embeddings via OpenRouter into Chroma, test raw search in a script.
-4. **Plain RAG:** question → search → answer with citations (no tools yet, no streaming).
+4. **Plain RAG:** question → search → full Q&As with highlighted passages (no tools yet, no streaming).
 5. **Tools:** add the 3 tools + agent loop.
 6. **Query translation:** rewrite with history.
 7. **Streaming:** SSE route + client reader + progress steps.
-8. **UI:** chat window, source cards, citations, topic sidebar.
+8. **UI:** chat window, source cards with highlights, topic sidebar.
 9. **Tool popover:** visualisation of tool results.
 10. **Prompt injection:** validation, guard classifier, hardened prompt.
 11. **Error handling:** polish all error states.
@@ -345,4 +349,4 @@ Each milestone is split into small steps; every step = one micro commit.
 
 - The texts belong to the site owner. Use for a personal learning project; ask before publishing the app or database.
 - Answers are one teacher's words: never generate "his" answer without a source behind it.
-- Known limitations to reflect on: one chunk per Q&A (long answers lose detail), English-only sources, threshold tuned on a small test set, guard classifier can be fooled or can block harmless questions.
+- Known limitations to reflect on: one chunk per Q&A (long answers lose detail), English-only sources, threshold tuned on a small test set, highlights depend on the LLM's selection (misquoted passages are dropped, so a relevant source can be hidden), guard classifier can be fooled or can block harmless questions.
