@@ -1,12 +1,9 @@
 // Builds the Chroma index from data/qa.jsonl.
 // Run with: pnpm index (re-run whenever the data, chunking or embedding model changes)
 import { readFileSync } from "node:fs";
-import { ChromaClient } from "chromadb";
 import { z } from "zod";
-import { env } from "../lib/env";
+import { chroma, COLLECTION_NAME } from "../lib/chroma";
 import { embeddings } from "../lib/llm";
-
-const COLLECTION_NAME = "lama-ole-qa";
 
 const qaSchema = z.object({
   id: z.number(),
@@ -43,13 +40,7 @@ async function main() {
   console.log(texts[0], vectors[0].slice(0, 5)); // first 5 numbers of the first vector (run pnpm index to see console.log output)
 
   // 4. Store in Chroma. We pass our own vectors, so the collection gets no embedding function.
-  const chromaUrl = new URL(env.CHROMA_URL);
-  const client = new ChromaClient({
-    host: chromaUrl.hostname,
-    port: Number(chromaUrl.port),
-    ssl: chromaUrl.protocol === "https:",
-  });
-  const collection = await client.getOrCreateCollection({
+  const collection = await chroma.getOrCreateCollection({
     name: COLLECTION_NAME,
     embeddingFunction: null,
     configuration: { hnsw: { space: "cosine" } },
