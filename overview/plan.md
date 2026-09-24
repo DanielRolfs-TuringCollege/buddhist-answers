@@ -29,7 +29,7 @@ Answers are **always in English** (German questions are accepted, but get Englis
 | LLM framework | LangChain.js **v1** interfaces |
 | LLM | `openai/gpt-4o-mini` via OpenRouter (OpenAI-compatible, `ChatOpenAI` with OpenRouter `baseURL`) |
 | Embeddings | `openai/text-embedding-3-small` via OpenRouter `/api/v1/embeddings` (`OpenAIEmbeddings` with OpenRouter `baseURL`) |
-| Vector DB | Chroma, running locally via Docker (`docker run -p 8000:8000 chromadb/chroma`) |
+| Vector DB | Chroma, running locally via Docker (`docker run -p 8000:8000 chromadb/chroma`), accessed with the official `chromadb` JS client (no LangChain wrapper: `@langchain/community` is deprecated) |
 | Validation | Zod (request body, tool arguments, guard output) |
 | Streaming | Own Server-Sent Events (SSE) from a Next.js route handler, read in React |
 | Chat history | React state only; full history is sent with each request |
@@ -60,7 +60,8 @@ Environment variables (`.env.local`): `OPENROUTER_API_KEY`, `CHROMA_URL`, `CHAT_
 2. One Q&A = one chunk (answers are short, no further splitting).
 3. Embed the text `"Question: … Answer: …"`.
 4. Store in Chroma with metadata: `id, question, url, category, tags, published`.
-   - Note: check during this milestone how Chroma handles list metadata (`tags`). Fallback: store tags as a string and filter in code.
+   - `tags` is stored as a real array and filtered in Chroma with `where: { tags: { $contains: "Anger" } }` (verified). Chroma rejects empty arrays, so Q&As without tags get no `tags` field.
+5. Collection `lama-ole-qa`, cosine distance, no Chroma embedding function (we pass our own vectors), `upsert` by Q&A id so re-running never duplicates.
 
 **How search works:** the search query is embedded with the **same** model, and Chroma returns the closest vectors along with their distance. We convert the distance into a similarity score (0–1) for the threshold and the UI.
 
@@ -301,7 +302,6 @@ components/                 chat, source cards, tool popover, sidebar (+ compone
 lib/
   env.ts                    validated environment variables
   llm.ts                    ChatOpenAI + OpenAIEmbeddings configured for OpenRouter
-  vectorstore.ts            Chroma connection
   validation.ts             Zod schemas
   guard.ts                  guard classifier
   rewrite.ts                query translation
@@ -310,7 +310,7 @@ lib/
   sse.ts                    SSE helpers (server + client event types)
 scripts/
   fetch-qa.ts               collect data
-  index.ts                  build Chroma index
+  index.ts                  build Chroma index (read qa.jsonl → embed → upsert, all in one file)
 data/qa.jsonl
 eval/
   questions.jsonl

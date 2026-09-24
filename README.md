@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Buddhist Answers
 
-## Getting Started
+A Next.js RAG app that answers questions using Lama Ole Nydahl's Q&As (`data/qa.jsonl`), with a local Chroma vector database.
 
-First, run the development server:
+## Setup
+
+Requirements: Node.js, [pnpm](https://pnpm.io), [Docker](https://www.docker.com) and an [OpenRouter](https://openrouter.ai) API key.
+
+### 1. Install dependencies
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Create `.env.local`
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+OPENROUTER_API_KEY=sk-or-...
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# Optional, these are the defaults:
+CHROMA_URL=http://localhost:8000
+CHAT_MODEL=openai/gpt-4o-mini
+EMBEDDING_MODEL=openai/text-embedding-3-small
+```
 
-## Learn More
+### 3. Start Chroma
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+docker run -p 8000:8000 -v ./chroma-data:/data chromadb/chroma
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The database is stored in `chroma-data/`. It is not in git, so every new machine starts with an empty database.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 4. Build the index
 
-## Deploy on Vercel
+With Chroma running, in a second terminal:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+pnpm index
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+This embeds every Q&A from `data/qa.jsonl` through OpenRouter and stores the vectors in the Chroma collection `lama-ole-qa`. It uses OpenRouter credit and prints:
+
+```
+Embedding <n> Q&As…
+Done: "lama-ole-qa" now holds <n> Q&As.
+```
+
+Re-run it whenever `data/qa.jsonl`, the chunking or `EMBEDDING_MODEL` changes. Re-running is safe: it replaces entries by id instead of duplicating them.
+
+### 5. Start the app
+
+```bash
+pnpm dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
