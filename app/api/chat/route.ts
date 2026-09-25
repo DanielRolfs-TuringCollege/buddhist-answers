@@ -1,10 +1,9 @@
 import { z } from "zod";
-import { chroma, COLLECTION_NAME } from "@/lib/chroma";
-import { embeddings } from "@/lib/llm";
 import { selectPassages, toSegments } from "@/lib/passages";
 import { rewriteQuestion } from "@/lib/rewrite";
-
-const TOP_K = 5;
+import { runAgent } from "@/lib/agent";
+import type { Topics } from "@/lib/tools/list-topics";
+import type { SearchResult } from "@/lib/tools/search-answers";
 
 const questionSchema = z.string().trim().min(1, "Question is empty").max(500, "Question is too long");
 
@@ -14,20 +13,6 @@ const requestSchema = z.object({
   // Earlier questions of this chat, oldest first. Limited to keep prompts small.
   history: z.array(questionSchema).max(10, "History is too long").default([]),
 });
-
-// Chroma metadata is untyped at runtime, so check the fields we rely on.
-const metadataSchema = z.object({
-  question: z.string(),
-  url: z.url(),
-  // Q&As without tags have no tags field in Chroma (see scripts/index.ts).
-  tags: z.array(z.string()).default([]),
-});
-
-// Stored documents look like "Question: …\nAnswer: Lama Ole’s answer:\n\n…".
-// Returns only his answer, with paragraphs kept.
-function toAnswerText(document: string) {
-  return (document.split("\nAnswer: ")[1] ?? "").replace(/^Lama Ole’s answer:\s*/, "");
-}
 
 export async function POST(request: Request) {
   // 1. Validate input. Bad input is the client's fault → 400.
@@ -48,22 +33,25 @@ export async function POST(request: Request) {
   try {
     // Search with a standalone English question, not the raw (maybe follow-up) text.
     const rewritten = await rewriteQuestion(parsed.data.text, parsed.data.history);
-    const embedding = await embeddings.embedQuery(rewritten);
+    console.log("[chat] rewritten question:", rewritten);
 
-    const collection = await chroma.getCollection({ name: COLLECTION_NAME });
-    const result = await collection.query({
-      queryEmbeddings: [embedding],
-      nResults: TOP_K,
-      include: ["metadatas", "documents"],
-    });
+    // Let the agent pick a tool. The route then uses that tool's result.
+    const toolResults = await runAgent(rewritten);
+    console.log("[chat] tool results:", toolResults);
 
-    // rows()[0] = the matches for our first (and only) query vector.
-    // n lets the LLM say which source a passage comes from.
-    const sources = result.rows()[0].map((row, index) => ({
-      n: index + 1,
-      answer: toAnswerText(row.document ?? ""),
-      ...metadataSchema.parse(row.metadata),
-    }));
+    const topicsResult = toolResults.find((toolResult) => toolResult.name === "list_topics");
+    if (topicsResult) {
+      // Safe cast: the artifact of list_topics is always its Topics object.
+      return Response.json({ rewritten, sources: [], topics: topicsResult.result as Topics });
+    }
+
+    // The first search the agent ran. No search (e.g. an off-topic question) → no sources.
+    const searchResult = toolResults.find((toolResult) => toolResult.name === "search_answers");
+    if (!searchResult) {
+      return Response.json({ rewritten, sources: [] });
+    }
+    // Safe cast: the artifact of search_answers is always its SearchResult list.
+    const sources = searchResult.result as SearchResult;
 
     const passages = await selectPassages(rewritten, sources);
 
@@ -74,7 +62,7 @@ export async function POST(request: Request) {
         const highlights = passages.filter((passage) => passage.n === n).map((passage) => passage.text);
         return { n, question, url, tags, segments: toSegments(answer, highlights) };
       });
-
+      
     return Response.json({ rewritten, sources: relevantSources });
   } catch (error) {
     console.error("[chat] request failed:", error);

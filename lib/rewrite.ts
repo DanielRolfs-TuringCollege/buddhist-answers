@@ -1,10 +1,12 @@
 import { chatModel } from "./llm";
 
-const SYSTEM_PROMPT = `You turn the user's latest question into one standalone English search question for a collection of Lama Ole Nydahl's answers.
+const SYSTEM_PROMPT = `You turn the user's latest question into one standalone English question, phrased the way the user would ask it.
 
 Rules:
-- Use the earlier questions only to fill in what the latest question refers to (e.g. "and in relationships?").
-- If the latest question already stands on its own, keep its meaning. Translate it to English if needed.
+- Keep the user's meaning, scope and perspective. Do not make a question more general or more specific than the user asked it.
+- Do not turn it into a question about what someone says or teaches.
+- Use the earlier questions only to resolve what the latest question refers to. Replace the reference with the shortest phrase that captures it, usually the topic, not a copy of the earlier question.
+- If the latest question already stands on its own, only translate it to English if needed.
 - Reply with the rewritten question only, nothing else.`;
 
 // Query translation: history + new question → one standalone English question.

@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { type Source, SourceCard } from "@/components/source-card";
+import type { Topics } from "@/lib/tools/list-topics";
 
 type Message = {
   id: number;
@@ -9,10 +10,12 @@ type Message = {
   // The standalone English question that was actually searched.
   rewritten: string;
   sources: Source[];
+  // Only set when the agent used list_topics ("What can I ask about?").
+  topics?: Topics;
 };
 
 // How many earlier questions are sent along, so follow-ups can be understood.
-const HISTORY_LENGTH = 4;
+const HISTORY_LENGTH = 1;
 
 export default function Home() {
   const [message, setMessage] = useState("");
@@ -30,13 +33,14 @@ export default function Home() {
     setIsLoading(true);
     setError(null);
 
-    let data: { rewritten: string; sources: Source[] };
+    let data: { rewritten: string; sources: Source[]; topics?: Topics };
 
     try {
       const response = await fetch("/api/chat", {
         body: JSON.stringify({
           text: message.trim(),
-          history: messages.slice(-HISTORY_LENGTH).map((earlier) => earlier.text),
+          // Rewritten questions are standalone, so the resolved topic carries over to the next turn.
+          history: messages.slice(-HISTORY_LENGTH).map((earlier) => earlier.rewritten),
         }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
@@ -86,10 +90,34 @@ export default function Home() {
                 <div className="ml-auto max-w-[85%] rounded-2xl rounded-br-sm bg-amber-700 px-4 py-3 text-white">
                   {currentMessage.text}
                 </div>
-                <p className="text-right text-xs text-stone-500">
-                  Searched for: {currentMessage.rewritten}
-                </p>
-                {currentMessage.sources.length === 0 ? (
+                {currentMessage.topics ? (
+                  <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-white px-4 py-3 text-stone-700">
+                    <p className="mb-3">You can ask about these topics:</p>
+                    <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-500">
+                      Categories
+                    </h2>
+                    <ul className="mb-4 flex flex-wrap gap-2">
+                      {currentMessage.topics.categories.map((category) => (
+                        <li
+                          className="rounded-md bg-amber-100 px-3 py-1 text-sm font-medium text-amber-900"
+                          key={category.name}
+                        >
+                          {category.name} ({category.count})
+                        </li>
+                      ))}
+                    </ul>
+                    <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-500">
+                      Tags
+                    </h2>
+                    <ul className="flex flex-wrap gap-2">
+                      {currentMessage.topics.tags.map((tag) => (
+                        <li className="rounded-full bg-stone-100 px-3 py-1 text-sm" key={tag.name}>
+                          {tag.name} ({tag.count})
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : currentMessage.sources.length === 0 ? (
                   <p className="max-w-[85%] rounded-2xl rounded-bl-sm bg-white px-4 py-3 text-stone-700">
                     There&apos;s no answer from Lama Ole on this topic in the collection.
                   </p>

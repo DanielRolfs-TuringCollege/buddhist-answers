@@ -82,8 +82,9 @@ User message + chat history
 3. Query translation: rewrite with history
    │  history + new message → one standalone English question
    ▼
-4. Agent (LLM + 3 tools, max 5 tool calls; parallel calls allowed)
-   │  LLM requests tool calls ──► backend runs them ──► results back to LLM
+4. Tool choice (one LLM call with 3 tools; parallel calls allowed)
+   │  LLM requests tool calls ──► backend runs them (no second LLM round:
+   │  the LLM never writes the answer, our code uses the tool results)
    ▼
 5. Highlight: an LLM picks word-for-word passages per source (structured output),
    │  the server keeps only passages that really appear in the source text
@@ -122,7 +123,7 @@ The agent receives the rewritten question. The UI shows it ("Searched for: …")
 
 **Why three:** each covers a different operation (ranking, overview, complete listing) with no overlap, so the LLM always has a clear choice.
 
-Tool arguments are validated with Zod. Tool errors are caught and returned to the LLM as an error message (the request doesn't crash).
+Tool arguments are validated with Zod. A failing tool fails the request (500, details in the server log): there is no second LLM round to return the error to.
 
 ---
 
@@ -137,7 +138,7 @@ Instead of a generated answer, the user sees the original Q&As with the answerin
 5. **Similarity threshold:** if the best score is below the threshold (tune on test questions), reply:
    *"There's no answer from Lama Ole on this topic in the collection."* (also shown when no source gets a passage) and suggest related topics via `list_topics()`.
 6. Use a tag filter only with names returned by `list_topics()`.
-7. Max 5 tool calls per question (loop safeguard).
+7. One tool-choice LLM call per question, no agent loop (saves one LLM call per question). Valid tag names go into the `search_answers` schema as a `z.enum`, so no `list_topics` → `search_answers` chaining is needed.
 
 ---
 
@@ -248,8 +249,7 @@ On mobile, the topic sidebar becomes a "Topics" button that opens a sheet.
 ## 11. Error handling
 
 - Chroma not reachable / OpenRouter error / timeout → SSE `error` event with a readable message; UI shows a retry button.
-- Tool errors are returned to the LLM instead of crashing the request.
-- Tool-call limit reached → answer with what was found so far.
+- Tool errors fail the request with a friendly 500 message (details only in the server log).
 - Stream aborted by the user (new question / page closed) → server stops work (`AbortSignal`).
 
 ---
@@ -310,7 +310,7 @@ lib/
   guard.ts                  guard classifier
   rewrite.ts                query translation
   tools/                    search_answers, list_topics, list_by_tag
-  agent.ts                  agent loop + system prompt
+  agent.ts                  tool choice (one LLM call) + system prompt
   sse.ts                    SSE helpers (server + client event types)
 scripts/
   fetch-qa.ts               collect data
@@ -333,7 +333,7 @@ Each milestone is split into small steps; every step = one micro commit.
 2. **Data:** fetch via API → `qa.jsonl` (check a few entries by hand).
 3. **Index:** embeddings via OpenRouter into Chroma, test raw search in a script.
 4. **Plain RAG:** question → search → full Q&As with highlighted passages (no tools yet, no streaming).
-5. **Tools:** add the 3 tools + agent loop.
+5. **Tools:** add the 3 tools + tool choice (one LLM call).
 6. **Query translation:** rewrite with history.
 7. **Streaming:** SSE route + client reader + progress steps.
 8. **UI:** chat window, source cards with highlights, topic sidebar.
