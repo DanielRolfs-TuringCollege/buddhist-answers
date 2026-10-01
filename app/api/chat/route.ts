@@ -3,7 +3,7 @@ import { selectPassages, selectTopicPassages, toSegments } from "@/lib/passages"
 import { rewriteQuestion } from "@/lib/rewrite";
 import { runAgent, type ToolResult } from "@/lib/agent";
 import { listQuestions, type TopicListing } from "@/lib/tools/list-questions";
-import { listTopics, type Topics } from "@/lib/tools/list-topics";
+import { countNames, listTopics, type Topics } from "@/lib/tools/list-topics";
 import type { SearchResult } from "@/lib/tools/search-answers";
 
 const questionSchema = z.string().trim().min(1, "Question is empty").max(500, "Question is too long");
@@ -84,6 +84,18 @@ export async function POST(request: Request) {
 
     const passages = await selectPassages(rewritten, sources);
 
+    // None of the found Q&As answers the question. Instead of "no answer", list the topic
+    // most of them share: related Q&As that may still help.
+    if (passages.length === 0) {
+      const topic = countNames(sources.flatMap((source) => source.tags))[0]?.name;
+      if (topic) {
+        const listing = await listQuestions(topic);
+        // Run by our code, not the agent, but shown like the other tool calls.
+        const fallbackCall = { name: "list_questions", args: { topic }, result: listing };
+        return respondWithListing(rewritten, listing, [...toolResults, fallbackCall], true);
+      }
+    }
+
     return Response.json({ rewritten, sources: withHighlights(sources, passages), toolCalls: toolResults });
   } catch (error) {
     console.error("[chat] request failed:", error);
@@ -100,6 +112,8 @@ async function respondWithListing(
   rewritten: string,
   { topic, sources, questions }: TopicListing,
   toolCalls: ToolResult[] = [],
+  // True when the question had no direct answer and this topic is the fallback.
+  fallback = false,
 ) {
   const passages = await selectTopicPassages(topic, sources);
   const relevantSources = withHighlights(sources, passages);
@@ -111,7 +125,7 @@ async function respondWithListing(
   return Response.json({
     rewritten,
     sources: relevantSources,
-    listing: { topic, total: questions.length, moreQuestions },
+    listing: { topic, total: questions.length, moreQuestions, fallback },
     toolCalls,
   });
 }

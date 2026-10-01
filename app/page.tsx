@@ -25,6 +25,8 @@ type Listing = {
   total: number;
   // The topic's questions without a highlighted card.
   moreQuestions: { question: string; url: string }[];
+  // True when the question had no direct answer and this related topic is shown instead.
+  fallback: boolean;
 };
 
 // How many earlier questions are sent along, so follow-ups can be understood.
@@ -173,8 +175,17 @@ export default function Home() {
                 ) : currentMessage.listing ? (
                   <>
                     <p className="max-w-[85%] rounded-2xl rounded-bl-sm bg-white px-4 py-3 text-stone-700">
-                      {currentMessage.listing.total} Q&amp;As on &ldquo;{currentMessage.listing.topic}&rdquo;
-                      {currentMessage.sources.length > 0 && ", these discuss it most directly:"}
+                      {currentMessage.listing.fallback ? (
+                        <>
+                          Lama Ole doesn&apos;t answer this exact question, but these Q&amp;As
+                          on &ldquo;{currentMessage.listing.topic}&rdquo; might still help:
+                        </>
+                      ) : (
+                        <>
+                          {currentMessage.listing.total} Q&amp;As on &ldquo;{currentMessage.listing.topic}&rdquo;
+                          {currentMessage.sources.length > 0 && ", these discuss it most directly:"}
+                        </>
+                      )}
                     </p>
                     {currentMessage.sources.map((source) => (
                       <SourceCard key={source.n} source={source} />

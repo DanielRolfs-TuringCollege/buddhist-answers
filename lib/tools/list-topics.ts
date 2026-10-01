@@ -12,7 +12,7 @@ const metadataSchema = z.object({
 type TopicCount = { name: string; count: number };
 
 // Turns ["Anger", "Love", "Anger"] into [{ name: "Anger", count: 2 }, { name: "Love", count: 1 }].
-function countNames(names: string[]): TopicCount[] {
+export function countNames(names: string[]): TopicCount[] {
   const counts = new Map<string, number>();
   for (const name of names) {
     counts.set(name, (counts.get(name) ?? 0) + 1);
