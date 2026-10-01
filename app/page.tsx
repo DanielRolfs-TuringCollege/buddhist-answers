@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { MoreQuestions } from "@/components/more-questions";
 import { type Source, SourceCard } from "@/components/source-card";
 import type { Topics } from "@/lib/tools/list-topics";
 
@@ -31,6 +32,13 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Points to the newest message, so we can scroll it into view.
+  const lastMessageRef = useRef<HTMLDivElement>(null);
+
+  // A new message (typed or a clicked topic) may appear far below: scroll to its start.
+  useEffect(() => {
+    lastMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [messages.length]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -39,6 +47,14 @@ export default function Home() {
       return;
     }
 
+    if (await ask(message.trim())) {
+      setMessage("");
+    }
+  }
+
+  // Sends a question, a clicked topic or "Show topics" (then the server skips the LLMs).
+  // Returns whether it worked, so the form only clears the input on success.
+  async function ask(text: string, options: { topic?: string; showTopics?: boolean } = {}) {
     setIsLoading(true);
     setError(null);
 
@@ -47,7 +63,8 @@ export default function Home() {
     try {
       const response = await fetch("/api/chat", {
         body: JSON.stringify({
-          text: message.trim(),
+          text,
+          ...options,
           // Rewritten questions are standalone, so the resolved topic carries over to the next turn.
           history: messages.slice(-HISTORY_LENGTH).map((earlier) => earlier.rewritten),
         }),
@@ -62,16 +79,13 @@ export default function Home() {
       data = await response.json();
     } catch {
       setError("We could not process your question. Please try again.");
-      return;
+      return false;
     } finally {
       setIsLoading(false);
     }
 
-    setMessages((currentMessages) => [
-      ...currentMessages,
-      { id: Date.now(), text: message.trim(), ...data },
-    ]);
-    setMessage("");
+    setMessages((currentMessages) => [...currentMessages, { id: Date.now(), text, ...data }]);
+    return true;
   }
 
   return (
@@ -90,12 +104,25 @@ export default function Home() {
       <section className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 pt-8">
         <div className="flex-1 space-y-4">
           {messages.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-stone-300 bg-white p-6 text-center text-stone-500">
-              Ask a question about the collection to get started.
-            </p>
+            <div className="rounded-xl border border-dashed border-stone-300 bg-white p-6 text-center text-stone-500">
+              <p>Ask a question below or request a list of topics to explore.</p>
+              <button
+                className="mt-4 rounded-xl bg-amber-100 px-4 py-2 text-sm font-medium text-amber-900 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={isLoading}
+                onClick={() => ask("Show topics", { showTopics: true })}
+                type="button"
+              >
+                Show topics
+              </button>
+            </div>
           ) : (
-            messages.map((currentMessage) => (
-              <div className="space-y-4" key={currentMessage.id}>
+            messages.map((currentMessage, index) => (
+              <div
+                // scroll-mt keeps the message from hiding under the sticky header.
+                className="scroll-mt-36 space-y-4"
+                key={currentMessage.id}
+                ref={index === messages.length - 1 ? lastMessageRef : undefined}
+              >
                 <div className="ml-auto max-w-[85%] rounded-2xl rounded-br-sm bg-amber-700 px-4 py-3 text-white">
                   {currentMessage.text}
                 </div>
@@ -107,11 +134,15 @@ export default function Home() {
                     </h2>
                     <ul className="mb-4 flex flex-wrap gap-2">
                       {currentMessage.topics.categories.map((category) => (
-                        <li
-                          className="rounded-md bg-amber-100 px-3 py-1 text-sm font-medium text-amber-900"
-                          key={category.name}
-                        >
-                          {category.name} ({category.count})
+                        <li key={category.name}>
+                          <button
+                            className="rounded-md bg-amber-100 px-3 py-1 text-sm font-medium text-amber-900 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={isLoading}
+                            onClick={() => ask(category.name, { topic: category.name })}
+                            type="button"
+                          >
+                            {category.name} ({category.count})
+                          </button>
                         </li>
                       ))}
                     </ul>
@@ -120,8 +151,15 @@ export default function Home() {
                     </h2>
                     <ul className="flex flex-wrap gap-2">
                       {currentMessage.topics.tags.map((tag) => (
-                        <li className="rounded-full bg-stone-100 px-3 py-1 text-sm" key={tag.name}>
-                          {tag.name} ({tag.count})
+                        <li key={tag.name}>
+                          <button
+                            className="rounded-full bg-stone-100 px-3 py-1 text-sm transition hover:bg-stone-200 disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={isLoading}
+                            onClick={() => ask(tag.name, { topic: tag.name })}
+                            type="button"
+                          >
+                            {tag.name} ({tag.count})
+                          </button>
                         </li>
                       ))}
                     </ul>
@@ -136,25 +174,7 @@ export default function Home() {
                       <SourceCard key={source.n} source={source} />
                     ))}
                     {currentMessage.listing.moreQuestions.length > 0 && (
-                      <div className="rounded-2xl bg-white px-5 py-4">
-                        <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-500">
-                          More questions on this topic
-                        </h2>
-                        <ul className="space-y-1 text-sm">
-                          {currentMessage.listing.moreQuestions.map((item) => (
-                            <li key={item.url}>
-                              <a
-                                className="text-amber-800 hover:underline"
-                                href={item.url}
-                                rel="noopener noreferrer"
-                                target="_blank"
-                              >
-                                {item.question}
-                              </a>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
+                      <MoreQuestions questions={currentMessage.listing.moreQuestions} />
                     )}
                   </>
                 ) : currentMessage.sources.length === 0 ? (
