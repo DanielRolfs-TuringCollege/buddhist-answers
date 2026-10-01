@@ -27,7 +27,7 @@ export async function searchAnswers(query: string) {
   const result = await collection.query({
     queryEmbeddings: [embedding],
     nResults: TOP_K,
-    include: ["metadatas", "documents"],
+    include: ["metadatas", "documents", "distances"],
   });
 
   // rows()[0] = the matches for our first (and only) query vector.
@@ -35,6 +35,9 @@ export async function searchAnswers(query: string) {
   return result.rows()[0].map((row, index) => ({
     n: index + 1,
     answer: toAnswerText(row.document ?? ""),
+    // The collection uses cosine distance (see scripts/index.ts), so 1 - distance = cosine similarity.
+    // 1 = same meaning; the UI shows it as a bar per result.
+    score: 1 - (row.distance ?? 1),
     ...metadataSchema.parse(row.metadata),
   }));
 }

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { selectPassages, selectTopicPassages, toSegments } from "@/lib/passages";
 import { rewriteQuestion } from "@/lib/rewrite";
-import { runAgent } from "@/lib/agent";
+import { runAgent, type ToolResult } from "@/lib/agent";
 import { listQuestions, type TopicListing } from "@/lib/tools/list-questions";
 import { listTopics, type Topics } from "@/lib/tools/list-topics";
 import type { SearchResult } from "@/lib/tools/search-answers";
@@ -60,30 +60,31 @@ export async function POST(request: Request) {
     // Let the agent pick a tool. The route then uses that tool's result.
     const toolResults = await runAgent(rewritten);
     console.log("[chat] tool results:", toolResults);
+    // Every response below also sends the tool calls, so the UI can show what the agent did.
 
     const topicsResult = toolResults.find((toolResult) => toolResult.name === "list_topics");
     if (topicsResult) {
       // Safe cast: the artifact of list_topics is always its Topics object.
-      return Response.json({ rewritten, sources: [], topics: topicsResult.result as Topics });
+      return Response.json({ rewritten, sources: [], topics: topicsResult.result as Topics, toolCalls: toolResults });
     }
 
     const listingResult = toolResults.find((toolResult) => toolResult.name === "list_questions");
     if (listingResult) {
       // Safe cast: the artifact of list_questions is always its TopicListing.
-      return respondWithListing(rewritten, listingResult.result as TopicListing);
+      return respondWithListing(rewritten, listingResult.result as TopicListing, toolResults);
     }
 
     // The first search the agent ran. No search (e.g. an off-topic question) → no sources.
     const searchResult = toolResults.find((toolResult) => toolResult.name === "search_answers");
     if (!searchResult) {
-      return Response.json({ rewritten, sources: [] });
+      return Response.json({ rewritten, sources: [], toolCalls: toolResults });
     }
     // Safe cast: the artifact of search_answers is always its SearchResult list.
     const sources = searchResult.result as SearchResult;
 
     const passages = await selectPassages(rewritten, sources);
 
-    return Response.json({ rewritten, sources: withHighlights(sources, passages) });
+    return Response.json({ rewritten, sources: withHighlights(sources, passages), toolCalls: toolResults });
   } catch (error) {
     console.error("[chat] request failed:", error);
     return Response.json(
@@ -94,7 +95,12 @@ export async function POST(request: Request) {
 }
 
 // Highlights the closest Q&As of a topic; the rest of its questions become plain links.
-async function respondWithListing(rewritten: string, { topic, sources, questions }: TopicListing) {
+// A clicked topic has no agent, so no tool calls to show.
+async function respondWithListing(
+  rewritten: string,
+  { topic, sources, questions }: TopicListing,
+  toolCalls: ToolResult[] = [],
+) {
   const passages = await selectTopicPassages(topic, sources);
   const relevantSources = withHighlights(sources, passages);
 
@@ -106,13 +112,15 @@ async function respondWithListing(rewritten: string, { topic, sources, questions
     rewritten,
     sources: relevantSources,
     listing: { topic, total: questions.length, moreQuestions },
+    toolCalls,
   });
 }
 
 type Passage = Awaited<ReturnType<typeof selectPassages>>[number];
 
 // Keep only sources with at least one passage, and cut their answers into highlight segments.
-function withHighlights(sources: SearchResult, passages: Passage[]) {
+// Typed as a topic's sources: search results have the same fields (plus a score we don't need here).
+function withHighlights(sources: TopicListing["sources"], passages: Passage[]) {
   return sources
     .filter((source) => passages.some((passage) => passage.n === source.n))
     .map(({ n, question, url, tags, answer }) => {

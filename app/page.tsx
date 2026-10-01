@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { MoreQuestions } from "@/components/more-questions";
 import { type Source, SourceCard } from "@/components/source-card";
+import { type ToolCall, ToolCalls } from "@/components/tool-calls";
 import type { Topics } from "@/lib/tools/list-topics";
 
 type Message = {
@@ -15,6 +16,8 @@ type Message = {
   topics?: Topics;
   // Only set when the agent used list_questions ("What else should I know about X?").
   listing?: Listing;
+  // What the agent called. Empty or missing when no agent ran (clicked topic, "Show topics").
+  toolCalls?: ToolCall[];
 };
 
 type Listing = {
@@ -58,7 +61,7 @@ export default function Home() {
     setIsLoading(true);
     setError(null);
 
-    let data: { rewritten: string; sources: Source[]; topics?: Topics; listing?: Listing };
+    let data: Omit<Message, "id" | "text">;
 
     try {
       const response = await fetch("/api/chat", {
@@ -126,6 +129,9 @@ export default function Home() {
                 <div className="ml-auto max-w-[85%] rounded-2xl rounded-br-sm bg-amber-700 px-4 py-3 text-white">
                   {currentMessage.text}
                 </div>
+                {currentMessage.toolCalls && currentMessage.toolCalls.length > 0 && (
+                  <ToolCalls toolCalls={currentMessage.toolCalls} />
+                )}
                 {currentMessage.topics ? (
                   <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-white px-4 py-3 text-stone-700">
                     <p className="mb-3">You can ask about these topics:</p>
