@@ -15,7 +15,7 @@ const metadataSchema = z.object({
 
 // Stored documents look like "Question: …\nAnswer: Lama Ole’s answer:\n\n…".
 // Returns only his answer, with paragraphs kept.
-function toAnswerText(document: string) {
+export function toAnswerText(document: string) {
   return (document.split("\nAnswer: ")[1] ?? "").replace(/^Lama Ole’s answer:\s*/, "");
 }
 

@@ -1,7 +1,8 @@
 import { z } from "zod";
-import { selectPassages, toSegments } from "@/lib/passages";
+import { selectPassages, selectTopicPassages, toSegments } from "@/lib/passages";
 import { rewriteQuestion } from "@/lib/rewrite";
 import { runAgent } from "@/lib/agent";
+import type { TopicListing } from "@/lib/tools/list-questions";
 import type { Topics } from "@/lib/tools/list-topics";
 import type { SearchResult } from "@/lib/tools/search-answers";
 
@@ -45,6 +46,24 @@ export async function POST(request: Request) {
       return Response.json({ rewritten, sources: [], topics: topicsResult.result as Topics });
     }
 
+    const listingResult = toolResults.find((toolResult) => toolResult.name === "list_questions");
+    if (listingResult) {
+      // Safe cast: the artifact of list_questions is always its TopicListing.
+      const { topic, sources, questions } = listingResult.result as TopicListing;
+      const passages = await selectTopicPassages(topic, sources);
+      const relevantSources = withHighlights(sources, passages);
+
+      // Every question of the topic that didn't get a card is listed as a plain link.
+      const shownUrls = new Set(relevantSources.map((source) => source.url));
+      const moreQuestions = questions.filter((question) => !shownUrls.has(question.url));
+
+      return Response.json({
+        rewritten,
+        sources: relevantSources,
+        listing: { topic, total: questions.length, moreQuestions },
+      });
+    }
+
     // The first search the agent ran. No search (e.g. an off-topic question) → no sources.
     const searchResult = toolResults.find((toolResult) => toolResult.name === "search_answers");
     if (!searchResult) {
@@ -55,15 +74,7 @@ export async function POST(request: Request) {
 
     const passages = await selectPassages(rewritten, sources);
 
-    // Keep only sources with at least one passage that answers the question.
-    const relevantSources = sources
-      .filter((source) => passages.some((passage) => passage.n === source.n))
-      .map(({ n, question, url, tags, answer }) => {
-        const highlights = passages.filter((passage) => passage.n === n).map((passage) => passage.text);
-        return { n, question, url, tags, segments: toSegments(answer, highlights) };
-      });
-      
-    return Response.json({ rewritten, sources: relevantSources });
+    return Response.json({ rewritten, sources: withHighlights(sources, passages) });
   } catch (error) {
     console.error("[chat] request failed:", error);
     return Response.json(
@@ -71,4 +82,16 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+}
+
+type Passage = Awaited<ReturnType<typeof selectPassages>>[number];
+
+// Keep only sources with at least one passage, and cut their answers into highlight segments.
+function withHighlights(sources: SearchResult, passages: Passage[]) {
+  return sources
+    .filter((source) => passages.some((passage) => passage.n === source.n))
+    .map(({ n, question, url, tags, answer }) => {
+      const highlights = passages.filter((passage) => passage.n === n).map((passage) => passage.text);
+      return { n, question, url, tags, segments: toSegments(answer, highlights) };
+    });
 }

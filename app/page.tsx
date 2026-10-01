@@ -12,6 +12,15 @@ type Message = {
   sources: Source[];
   // Only set when the agent used list_topics ("What can I ask about?").
   topics?: Topics;
+  // Only set when the agent used list_questions ("What else should I know about X?").
+  listing?: Listing;
+};
+
+type Listing = {
+  topic: string;
+  total: number;
+  // The topic's questions without a highlighted card.
+  moreQuestions: { question: string; url: string }[];
 };
 
 // How many earlier questions are sent along, so follow-ups can be understood.
@@ -33,7 +42,7 @@ export default function Home() {
     setIsLoading(true);
     setError(null);
 
-    let data: { rewritten: string; sources: Source[]; topics?: Topics };
+    let data: { rewritten: string; sources: Source[]; topics?: Topics; listing?: Listing };
 
     try {
       const response = await fetch("/api/chat", {
@@ -117,6 +126,37 @@ export default function Home() {
                       ))}
                     </ul>
                   </div>
+                ) : currentMessage.listing ? (
+                  <>
+                    <p className="max-w-[85%] rounded-2xl rounded-bl-sm bg-white px-4 py-3 text-stone-700">
+                      {currentMessage.listing.total} Q&amp;As on &ldquo;{currentMessage.listing.topic}&rdquo;
+                      {currentMessage.sources.length > 0 && ", these discuss it most directly:"}
+                    </p>
+                    {currentMessage.sources.map((source) => (
+                      <SourceCard key={source.n} source={source} />
+                    ))}
+                    {currentMessage.listing.moreQuestions.length > 0 && (
+                      <div className="rounded-2xl bg-white px-5 py-4">
+                        <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-500">
+                          More questions on this topic
+                        </h2>
+                        <ul className="space-y-1 text-sm">
+                          {currentMessage.listing.moreQuestions.map((item) => (
+                            <li key={item.url}>
+                              <a
+                                className="text-amber-800 hover:underline"
+                                href={item.url}
+                                rel="noopener noreferrer"
+                                target="_blank"
+                              >
+                                {item.question}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </>
                 ) : currentMessage.sources.length === 0 ? (
                   <p className="max-w-[85%] rounded-2xl rounded-bl-sm bg-white px-4 py-3 text-stone-700">
                     There&apos;s no answer from Lama Ole on this topic in the collection.

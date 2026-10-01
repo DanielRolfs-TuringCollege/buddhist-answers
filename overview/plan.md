@@ -119,9 +119,11 @@ The agent receives the rewritten question. The UI shows it ("Searched for: …")
 |---|---|---|
 | `search_answers(query, tag?, top_k=5)` | Specific question | Vector search, optionally filtered by one tag. Returns answers + similarity scores. |
 | `list_topics()` | Exploring | Returns all categories and tags with counts. Also tells the LLM which tag names are valid. |
-| `list_by_tag(tag)` | "Show me everything about X" | Returns the complete list of Q&As for one tag (question + URL). |
+| `list_questions(topic)` | "Show me everything about X", "What else should I know about X?" | All Q&As of one tag or category (`where` filter). The 10 closest to the topic (vector search inside the filter) get highlighted passages where the topic is discussed; the rest are listed as question + URL. |
 
 **Why three:** each covers a different operation (ranking, overview, complete listing) with no overlap, so the LLM always has a clear choice.
+
+**Why `list_questions` exists:** a broad topic question has no specific question for vector search to match, so `search_answers` finds unrelated Q&As and passage selection rejects them all. `topic` accepts any tag or category name from `list_topics()` (the tag "Meditation" has 7 Q&As, the category "View and Meditation" has 106). Highlighting is capped at 10 Q&As to keep the LLM call small.
 
 Tool arguments are validated with Zod. A failing tool fails the request (500, details in the server log): there is no second LLM round to return the error to.
 
@@ -222,7 +224,7 @@ On mobile, the topic sidebar becomes a "Topics" button that opens a sheet.
 | Source cards | Question title, full answer with highlighted passages, tags, link to original page | SSE `sources` (`segments`) |
 | "Open original page" link | Lets users verify the answer on the real website | `url` metadata |
 | Topic sidebar with counts | Browse and explore | `list_topics()` |
-| Clicking a topic | Shows all questions for that tag as a list of links | `list_by_tag(tag)` |
+| Clicking a topic | Shows the questions for that tag or category, the top 10 with highlights | `list_questions(topic)` |
 | Tag chip on a source card | Click = ask again filtered to that tag | `search_answers(query, tag)` |
 | Related questions | Follow-up reading | 2nd `search_answers` call using the top answer's text |
 | No-match state | "No answer on this in the collection. Try these topics: …" | Similarity threshold + `list_topics()` |
@@ -234,7 +236,7 @@ On mobile, the topic sidebar becomes a "Topics" button that opens a sheet.
 |---|---|
 | `search_answers` | Arguments (query, tag) + list of results with a horizontal bar per similarity score; threshold shown as a line |
 | `list_topics` | Tags with counts as a small bar list |
-| `list_by_tag` | Tag name, number of results, list of question links |
+| `list_questions` | Topic name, number of results, list of question links |
 
 ### UX details
 
@@ -309,7 +311,7 @@ lib/
   validation.ts             Zod schemas
   guard.ts                  guard classifier
   rewrite.ts                query translation
-  tools/                    search_answers, list_topics, list_by_tag
+  tools/                    search_answers, list_topics, list_questions
   agent.ts                  tool choice (one LLM call) + system prompt
   sse.ts                    SSE helpers (server + client event types)
 scripts/
