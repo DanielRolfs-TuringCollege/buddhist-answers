@@ -18,6 +18,8 @@ type Message = {
   listing?: Listing;
   // What the agent called. Empty or missing when no agent ran (clicked topic, "Show topics").
   toolCalls?: ToolCall[];
+  // Only set when the guard blocked the question: the text to show instead of an answer.
+  blocked?: string;
 };
 
 type Listing = {
@@ -71,7 +73,11 @@ export default function Home() {
           text,
           ...options,
           // Rewritten questions are standalone, so the resolved topic carries over to the next turn.
-          history: messages.slice(-HISTORY_LENGTH).map((earlier) => earlier.rewritten),
+          // Blocked questions are skipped: they have no rewritten question to carry over.
+          history: messages
+            .filter((earlier) => !earlier.blocked)
+            .slice(-HISTORY_LENGTH)
+            .map((earlier) => earlier.rewritten),
         }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
@@ -134,7 +140,11 @@ export default function Home() {
                 {currentMessage.toolCalls && currentMessage.toolCalls.length > 0 && (
                   <ToolCalls toolCalls={currentMessage.toolCalls} />
                 )}
-                {currentMessage.topics ? (
+                {currentMessage.blocked ? (
+                  <p className="max-w-[85%] rounded-2xl rounded-bl-sm bg-amber-50 px-4 py-3 text-amber-900">
+                    {currentMessage.blocked}
+                  </p>
+                ) : currentMessage.topics ? (
                   <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-white px-4 py-3 text-stone-700">
                     <p className="mb-3">You can ask about these topics:</p>
                     <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-500">

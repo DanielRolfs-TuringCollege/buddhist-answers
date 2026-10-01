@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BLOCKED_MESSAGES, checkMessage } from "@/lib/guard";
 import { selectPassages, selectTopicPassages, toSegments } from "@/lib/passages";
 import { rewriteQuestion } from "@/lib/rewrite";
 import { runAgent, type ToolResult } from "@/lib/agent";
@@ -51,6 +52,13 @@ export async function POST(request: Request) {
       }
       // Stands in for the rewritten question, so follow-ups have something to refer to.
       return respondWithListing(`Tell me about ${topic}`, await listQuestions(topic));
+    }
+
+    // Typed text goes to the LLMs, so check it first. Blocked → no rewrite, agent or search.
+    const { verdict, reason } = await checkMessage(parsed.data.text);
+    if (verdict !== "ok") {
+      console.log(`[chat] blocked (${verdict}):`, reason);
+      return Response.json({ rewritten: "", sources: [], blocked: BLOCKED_MESSAGES[verdict] });
     }
 
     // Search with a standalone English question, not the raw (maybe follow-up) text.
