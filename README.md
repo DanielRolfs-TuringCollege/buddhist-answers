@@ -20,8 +20,16 @@ Requirements: Node.js, [pnpm](https://pnpm.io), [Docker](https://www.docker.com)
    CHAT_MODEL=openai/gpt-4o-mini
    EMBEDDING_MODEL=openai/text-embedding-3-small
    ```
-3. Start Chroma: `docker run -p 8000:8000 -v ./chroma-data:/data chromadb/chroma` (data in `chroma-data/`, not in git)
-4. Build the index (in a second terminal): `pnpm index`. Embeds every Q&A through OpenRouter into the collection `lama-ole-qa`. Re-run it when the data, chunking or embedding model changes; it upserts by id, so no duplicates.
+3. Start Chroma in the background. The data lives in `chroma-data/` (not in git), so the container itself holds nothing:
+
+   ```bash
+   # first time: create the container
+   docker run -d --name chroma -p 8000:8000 -v ./chroma-data:/data chromadb/chroma
+   # afterwards: start and stop the same container
+   docker start chroma
+   docker stop chroma
+   ```
+4. Build the index: `pnpm index`. Embeds every Q&A through OpenRouter into the collection `lama-ole-qa`. Re-run it when the data, chunking or embedding model changes; it upserts by id, so no duplicates.
 5. `pnpm dev` and open [http://localhost:3000](http://localhost:3000).
 
 ## How a question is answered

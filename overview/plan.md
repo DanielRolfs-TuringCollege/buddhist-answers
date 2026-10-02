@@ -25,14 +25,15 @@ The sources are in English. German questions are accepted (query translation tur
 | Part | Choice |
 |---|---|
 | App | Next.js (App Router) + TypeScript |
-| UI | Tailwind CSS + shadcn/ui (Popover, Card, Badge, Sheet, …) |
+| UI | Tailwind CSS + shadcn/ui (only Popover is used) |
 | LLM framework | LangChain.js **v1** interfaces |
 | LLM | `openai/gpt-4o-mini` via OpenRouter (OpenAI-compatible, `ChatOpenAI` with OpenRouter `baseURL`) |
 | Embeddings | `openai/text-embedding-3-small` via OpenRouter `/api/v1/embeddings` (`OpenAIEmbeddings` with OpenRouter `baseURL`) |
-| Vector DB | Chroma, running locally via Docker (`docker run -p 8000:8000 chromadb/chroma`), accessed with the official `chromadb` JS client (no LangChain wrapper: `@langchain/community` is deprecated) |
+| Vector DB | Chroma, running locally via Docker (`docker run -d --name chroma -p 8000:8000 -v ./chroma-data:/data chromadb/chroma` once, then `docker start chroma`), accessed with the official `chromadb` JS client (no LangChain wrapper: `@langchain/community` is deprecated) |
 | Validation | Zod (request body, tool arguments, guard output) |
 | Streaming | Own stream of JSON lines (one object per line) from a Next.js route handler, read in React |
-| Chat history | React state only; full history is sent with each request |
+| Chat history | React state only; the last rewritten question is sent with each request (`HISTORY_LENGTH = 1`) |
+| Feedback | Thumbs up/down per answer, appended to `logs/feedback.jsonl` (committed, to improve answers later) |
 | Evaluation | TS script collects results → Python script with the `ragas` library scores them |
 
 Environment variables (`.env.local`): `OPENROUTER_API_KEY`, `CHROMA_URL`, `CHAT_MODEL`, `EMBEDDING_MODEL`.
@@ -41,7 +42,7 @@ Environment variables (`.env.local`): `OPENROUTER_API_KEY`, `CHROMA_URL`, `CHAT_
 
 ## 3. Data pipeline
 
-### Step 1 – Collect (run once, `scripts/fetch-qa.ts`)
+### Step 1 – Collect (run once on 2026-09-24 with a one-off script that is not kept in the repo)
 
 1. Fetch all posts from the WordPress REST API:
    `https://lama-ole-nydahl.org/questions/wp-json/wp/v2/posts?per_page=100&page=1..3`
@@ -63,7 +64,7 @@ Environment variables (`.env.local`): `OPENROUTER_API_KEY`, `CHROMA_URL`, `CHAT_
    - `tags` is stored as a real array and filtered in Chroma with `where: { tags: { $contains: "Anger" } }` (verified). Chroma rejects empty arrays, so Q&As without tags get no `tags` field.
 5. Collection `lama-ole-qa`, cosine distance, no Chroma embedding function (we pass our own vectors), `upsert` by Q&A id so re-running never duplicates.
 
-**How search works:** the search query is embedded with the **same** model, and Chroma returns the closest vectors along with their distance. We convert the distance into a similarity score (0–1) for the threshold and the UI.
+**How search works:** the search query is embedded with the **same** model, and Chroma returns the closest vectors along with their distance. We convert the distance into a similarity score (0–1) for the UI.
 
 ---
 
@@ -101,15 +102,15 @@ Before each slow step the route sends a progress line, so the UI can show what i
 
 **Why:** the raw user message is often a bad search query: follow-ups ("and what about jealousy?"), vague wording, or German.
 
-**How:** one LLM call before the agent. Input: the last few chat turns + the new message. Output: **one standalone English question**.
+**How:** one LLM call before the agent. Input: the previous rewritten question + the new message. Output: **one standalone English question**. A question that makes sense on its own ignores the history, and the rewrite keeps the user's perspective (it doesn't turn a question into "What does Lama Ole say about …").
 
 | User types | History | Rewritten question |
 |---|---|---|
-| "and jealousy?" | previous question was about anger in relationships | "What does Lama Ole say about jealousy in relationships?" |
+| "and jealousy?" | previous question was about anger in relationships | "How should I deal with jealousy in relationships?" |
 | "Wie gehe ich mit Wut um?" | – | "How should I deal with anger?" |
 | "ugh my boyfriend drives me crazy" | – | "How can I deal with frustration and anger at my partner?" |
 
-The agent receives the rewritten question. The UI shows it ("Searched for: …") so the user can see what was searched.
+The agent receives the rewritten question. The UI shows the actual search query in the tool chip ("Searched “…”"), so the user can see what was searched.
 
 ---
 
@@ -137,8 +138,8 @@ Instead of a generated answer, the user sees the original Q&As with the answerin
 2. At most 2 passages per source: the most direct ones.
 3. Only include sources that really answer the question; sources without a passage are not shown.
 4. The LLM replies with structured output (`{ passages: [{ n, text }] }`, Zod schema, `strict: true`). The server drops every passage that does not appear verbatim in its source, so a highlight can never contain words he didn't say.
-5. **Similarity threshold:** if the best score is below the threshold (tune on test questions), reply:
-   *"There's no answer from Lama Ole on this topic in the collection."* (also shown when no source gets a passage) and suggest related topics via `list_topics()`.
+5. **No answer:** when no source gets a passage, the route lists the tag most of the found Q&As share (`list_questions`, shown as "Lama Ole doesn't answer this exact question, but these Q&As … might still help"). Only if they have no tags does the UI show *"There's no answer from Lama Ole on this topic in the collection."* (also shown when the agent calls no tool).
+   *Not built:* a similarity threshold on the best score. Only the passage selection LLM decides that nothing fits.
 6. One tool-choice LLM call per question, no agent loop (saves one LLM call per question). Valid topic names go into the `list_questions` schema as a `z.enum`, so no `list_topics` → `list_questions` chaining is needed.
 
 ---
@@ -169,7 +170,7 @@ The React client reads the stream with `fetch` + `ReadableStream`, shows the new
 
 Three layers:
 
-1. **Input validation:** Zod schema, max message length (e.g. 500 characters), history length limit, control characters stripped. Invalid input → HTTP 400 with a clear message.
+1. **Input validation:** Zod schema, max message length (e.g. 500 characters), history length limit, whitespace trimmed. Invalid input → HTTP 400 with a clear message.
 2. **Guard classifier:** a cheap LLM call with structured output (`{verdict: "ok" | "injection" | "off_topic", reason}`) before anything else. Blocked messages get a friendly reply, and the agent never runs.
 3. **Hardened system prompt:** user text and retrieved texts are wrapped in clear delimiters (`<user_question>…</user_question>`, `<source n="1">…</source>`). The prompt states that content inside them is data, never instructions, and that the assistant never speaks *as* Lama Ole.
 
@@ -179,73 +180,67 @@ Attack prompts are added to the eval set to show the defences work (§12).
 
 ## 10. UI
 
-### Layout (desktop)
+### Layout
+
+One chat column: a sticky header ("Questions to Lama Ole"), the messages, and a sticky question input at the bottom.
 
 ```
-┌──────────────────────┬──────────────────────────────────────────────┐
-│ Topics               │  Ask Lama Ole                                │
-│                      │                                              │
-│ Search topics…       │  ┌────────────────────────────────────────┐  │
-│                      │  │ You: I get angry at my partner quickly │  │
-│ Anger (39)           │  └────────────────────────────────────────┘  │
-│ Partnership (28)     │                                              │
-│ Emotions (39)        │  ✓ Checked · ✓ Rewritten · ● Searching…      │
-│ Dreams (18)          │  [Searched "Anger"] [Searched "Partnership"] │
-│ Faithfulness (19)    │        ▲ click → popover with tool result    │
-│ …                    │                                              │
-│                      │  ┌──────────────────────────────────────┐    │
-│ Show all answers     │  │ How should I deal with anger?        │    │
-│ for a topic          │  │ Full original answer … ▓highlighted  │    │
-│                      │  │ passage that answers the question▓ … │    │
-│                      │  │ … rest of the answer.                │    │
-│                      │  │ Anger · Emotions  Open original page↗│    │
-│                      │  └──────────────────────────────────────┘    │
-│                      │  (one card per relevant Q&A)                 │
-│                      │                                              │
-│                      │  Related questions                           │
-│                      │  • Why do we get angry at those we love?     │
-│                      │                                              │
-│                      │  ┌────────────────────────────────┐ [Ask]    │
-│                      │  │ Ask a question…                │          │
-│                      │  └────────────────────────────────┘          │
-└──────────────────────┴──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  QUESTIONS TO                                │
+│  Lama Ole                                    │
+├──────────────────────────────────────────────┤
+│              ┌─────────────────────────────┐ │
+│              │ I get angry at my partner   │ │
+│              └─────────────────────────────┘ │
+│  [Searched "How can I deal with anger …"]    │
+│        ▲ click → popover with tool result    │
+│  ┌────────────────────────────────────────┐  │
+│  │ ▓highlighted passage that answers▓     │  │
+│  │ Show full Q&A    Anger · Love   Source↗│  │
+│  └────────────────────────────────────────┘  │
+│  (one card per relevant Q&A)                 │
+│  👍 👎                                        │
+│                                              │
+│  ● Highlighting passages…                    │
+│  ┌──────────────────────────────┐ [Send]     │
+│  │ Ask a question…              │            │
+│  └──────────────────────────────┘            │
+└──────────────────────────────────────────────┘
 ```
-
-On mobile, the topic sidebar becomes a "Topics" button that opens a sheet.
 
 ### How each UI part maps to the backend
 
 | UI element | Purpose | Backed by |
 |---|---|---|
 | Chat window | Main question/answer flow | last line of the stream (the answer) |
-| Progress steps (Checking question → Rewriting → Searching → Highlighting passages) | Progress indicator for long operations | `{ step }` lines |
-| "Searched for: …" line | Shows the rewritten question | `rewritten` in the answer |
-| Tool chips ("Searched 'Anger'") | Shows which tools ran | `toolCalls` in the answer |
+| Spinner with the current step (Checking question → Rewriting → Searching → Highlighting passages) | Progress indicator for long operations | `{ step }` lines |
+| Tool chips ("Searched “…”", "Listed topics", "Listed “Anger”") | Shows which tools ran and with which arguments | `toolCalls` in the answer |
 | **Tool popover** (click on a chip) | Visualises the tool result (see below) | `toolCalls[].result` |
-| Source cards | Question title, full answer with highlighted passages, tags, link to original page | `sources` in the answer (`segments`) |
-| "Open original page" link | Lets users verify the answer on the real website | `url` metadata |
-| Topic sidebar with counts | Browse and explore | `list_topics()` |
-| Clicking a topic | Shows the questions for that tag or category, the top 10 with highlights | `list_questions(topic)` |
-| Tag chip on a source card | Click = list the Q&As of that tag | `list_questions(tag)` |
-| Related questions | Follow-up reading | 2nd `search_answers` call using the top answer's text |
-| No-match state | "No answer on this in the collection. Try these topics: …" | Similarity threshold + `list_topics()` |
+| Source cards | Collapsed: only the highlights. "Show full Q&A": question + full answer with highlights. Tags and a link to the original page | `sources` in the answer (`segments`) |
+| "Show topics" button (empty start screen) | Browse and explore | `list_topics()`, called directly without an LLM |
+| Category and tag chips with counts | Click = show the Q&As of that topic, the top 10 with highlights | `list_questions(topic)`, called directly without an LLM |
+| "More questions on this topic" | The topic's other Q&As as links, 5 at first, then "Show N more" | `listing.moreQuestions` |
+| No direct answer | "Lama Ole doesn't answer this exact question, but these Q&As on … might still help" | fallback `list_questions` on the most common tag (§7) |
 | Blocked state | Friendly message for injection/off-topic attempts | `blocked` in the answer |
+| Thumbs up/down | Feedback per answer, for improving answers later | `POST /api/feedback` → `logs/feedback.jsonl` |
 
 ### Tool-call visualisation (popover)
 
 | Tool | Popover content |
 |---|---|
-| `search_answers` | Argument (query) + list of results with a horizontal bar per similarity score; threshold shown as a line |
+| `search_answers` | Argument (query) + list of results with a horizontal bar per similarity score |
 | `list_topics` | Tags with counts as a small bar list |
 | `list_questions` | Topic name, number of results, list of question links |
 
 ### UX details
 
 - Highlighted passages are clearly marked (`<mark>`), and the rest of the answer stays readable around them.
-- Header and question input stay visible while scrolling.
-- Source cards show the publish date; data fetch date appears in a footer ("Data from lama-ole-nydahl.org, fetched 2026-09-24").
-- Empty start screen: three example questions as clickable suggestions plus the topic list.
-- Keyboard accessible: Enter sends, visible focus on links, chips, and popovers.
+- Header and question input stay visible while scrolling; a new message scrolls into view.
+- Keyboard accessible: Enter sends, Shift+Enter adds a line, popovers open from focusable chips.
+
+### Not built
+
+Ideas from the first plan that were dropped: a topic sidebar (and a mobile sheet), clickable tag chips on source cards, "Related questions" under an answer, a similarity threshold line in the popover, publish dates on cards, a data footer, and example questions on the start screen.
 
 ---
 
@@ -301,32 +296,37 @@ Scores only `specific` + `followup` questions (the others have no answer to judg
 | Faithfulness | sanity check | Is every claim in the highlights supported by the sources? The app already guarantees verbatim highlights (`lib/passages.ts` drops any passage not found in its source), so this mostly measures the judge. |
 | Answer relevancy | secondary | Do the highlights address the question? Weak fit: it generates questions from the "answer" and scores 0 when the judge finds the text noncommittal, which happens with hedged verbatim quotes. |
 
-Next: compare **plain pipeline** (always search → highlight) vs. **agent with 3 tools**, and **with vs. without query rewrite**.
+Not done (ideas for later): compare **plain pipeline** (always search → highlight) vs. **agent with 3 tools**, and **with vs. without query rewrite**.
 
 ---
 
-## 13. Project structure (planned)
+## 13. Project structure
 
 ```
 app/
-  page.tsx                  chat page
-  api/chat/route.ts         streaming endpoint (pipeline)
-  api/topics/route.ts       topic sidebar data
-components/                 chat, source cards, tool popover, sidebar (+ components/ui from shadcn)
+  page.tsx                  chat page (messages, stream reader, topic chips, feedback)
+  api/chat/route.ts         streaming endpoint (pipeline) + request validation
+  api/feedback/route.ts     thumbs up/down → log file
+components/
+  source-card.tsx           Q&A card with highlights
+  tool-calls.tsx            tool chips + popovers
+  more-questions.tsx        remaining questions of a topic as links
+  feedback-buttons.tsx      thumbs up/down
+  ui/popover.tsx            from shadcn
 lib/
   env.ts                    validated environment variables
   llm.ts                    ChatOpenAI + OpenAIEmbeddings configured for OpenRouter
   chroma.ts                 shared Chroma client + collection name
   passages.ts               LLM passage selection + splitting answers into highlight segments
-  validation.ts             Zod schemas
   guard.ts                  guard classifier
   rewrite.ts                query translation
   tools/                    search_answers, list_topics, list_questions
   agent.ts                  tool choice (one LLM call) + system prompt
+  question-log.ts           appends feedback to logs/feedback.jsonl
 scripts/
-  fetch-qa.ts               collect data
   index.ts                  build Chroma index (read qa.jsonl → embed → upsert, all in one file)
-data/qa.jsonl
+data/qa.jsonl               the collected Q&As (fetch script not kept, see §3)
+logs/feedback.jsonl         user feedback (committed)
 eval/
   questions.jsonl
   run.ts
@@ -347,12 +347,12 @@ Each milestone is split into small steps; every step = one micro commit.
 5. **Tools:** add the 3 tools + tool choice (one LLM call).
 6. **Query translation:** rewrite with history.
 7. **Streaming:** progress steps as JSON lines + client reader.
-8. **UI:** chat window, source cards with highlights, topic sidebar.
+8. **UI:** chat window, source cards with highlights, topic chips.
 9. **Tool popover:** visualisation of tool results.
 10. **Prompt injection:** validation, guard classifier, hardened prompt.
 11. **Error handling:** polish all error states.
-12. **Eval:** test set, `run.ts`, own checks, tune threshold.
-13. **RAGAs:** Python script, compare variants, write up findings.
+12. **Eval:** test set, `run.ts`, own checks (threshold tuning dropped, see §7).
+13. **RAGAs:** Python script, write up findings (comparing variants not done).
 
 ---
 
@@ -360,4 +360,4 @@ Each milestone is split into small steps; every step = one micro commit.
 
 - The texts belong to the site owner. Use for a personal learning project; ask before publishing the app or database.
 - Answers are one teacher's words: never generate "his" answer without a source behind it.
-- Known limitations to reflect on: one chunk per Q&A (long answers lose detail), English-only sources, threshold tuned on a small test set, highlights depend on the LLM's selection (misquoted passages are dropped, so a relevant source can be hidden), guard classifier can be fooled or can block harmless questions.
+- Known limitations to reflect on: one chunk per Q&A (long answers lose detail), English-only sources, no similarity threshold, only the last question kept as history, small test set (38 questions), highlights depend on the LLM's selection (misquoted passages are dropped, so a relevant source can be hidden), guard classifier can be fooled or can block harmless questions.

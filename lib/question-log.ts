@@ -5,7 +5,7 @@ import path from "node:path";
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "feedback.jsonl");
 
-// Appends a vote on an answer to logs/feedback.jsonl (not in git).
+// Appends a vote on an answer to logs/feedback.jsonl (committed, to improve answers later).
 // The vote comes first and the session id next, so good and bad answers and the lines
 // of one chat are easy to spot; the time goes last.
 // Logging must never break a request, so errors only go to the server log.
