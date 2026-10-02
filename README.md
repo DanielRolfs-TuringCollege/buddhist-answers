@@ -1,231 +1,116 @@
 # Buddhist Answers
 
-A Next.js RAG app that answers questions using Lama Ole Nydahl's Q&As (`data/qa.jsonl`), with a local Chroma vector database.
+A Next.js RAG app that answers questions with quotes from Lama Ole Nydahl's Q&As (`data/qa.jsonl`, 271 Q&As), using a local Chroma vector database.
+
+Optional tasks: source citations (easy), prompt injection protection (medium), tool call result visualisation in a popover (medium), RAGAs evaluation (hard).
 
 ## Setup
 
 Requirements: Node.js, [pnpm](https://pnpm.io), [Docker](https://www.docker.com) and an [OpenRouter](https://openrouter.ai) API key.
 
-### 1. Install dependencies
+1. `pnpm install`
+2. Create `.env.local`:
 
-```bash
-pnpm install
-```
-
-### 2. Create `.env.local`
-
-```bash
-OPENROUTER_API_KEY=sk-or-...
-
-# Optional, these are the defaults:
-CHROMA_URL=http://localhost:8000
-CHAT_MODEL=openai/gpt-4o-mini
-EMBEDDING_MODEL=openai/text-embedding-3-small
-```
-
-### 3. Start Chroma
-
-```bash
-docker run -p 8000:8000 -v ./chroma-data:/data chromadb/chroma
-```
-
-The database is stored in `chroma-data/`. It is not in git, so every new machine starts with an empty database.
-
-### 4. Build the index
-
-With Chroma running, in a second terminal:
-
-```bash
-pnpm index
-```
-
-This embeds every Q&A from `data/qa.jsonl` through OpenRouter and stores the vectors in the Chroma collection `lama-ole-qa`. It uses OpenRouter credit and prints:
-
-```
-Embedding <n> Q&As…
-Done: "lama-ole-qa" now holds <n> Q&As.
-```
-
-Re-run it whenever `data/qa.jsonl`, the chunking or `EMBEDDING_MODEL` changes. Re-running is safe: it replaces entries by id instead of duplicating them.
-
-### 5. Start the app
-
-```bash
-pnpm dev
-```
-
-Open [http://localhost:3000](http://localhost:3000).
+   ```bash
+   OPENROUTER_API_KEY=sk-or-...
+   # Optional, these are the defaults:
+   CHROMA_URL=http://localhost:8000
+   CHAT_MODEL=openai/gpt-4o-mini
+   EMBEDDING_MODEL=openai/text-embedding-3-small
+   ```
+3. Start Chroma: `docker run -p 8000:8000 -v ./chroma-data:/data chromadb/chroma` (data in `chroma-data/`, not in git)
+4. Build the index (in a second terminal): `pnpm index`. Embeds every Q&A through OpenRouter into the collection `lama-ole-qa`. Re-run it when the data, chunking or embedding model changes; it upserts by id, so no duplicates.
+5. `pnpm dev` and open [http://localhost:3000](http://localhost:3000).
 
 ## How a question is answered
 
-Each question goes through these steps in `app/api/chat/route.ts`. Steps marked **LLM** are chat model calls (`CHAT_MODEL`); **Embedding** is a call to `EMBEDDING_MODEL`. Chroma runs locally and costs nothing.
+All steps run in `app/api/chat/route.ts`. **LLM** = chat model call, **Embedding** = embedding model call.
 
 ```
 POST /api/chat { text, history, topic?, showTopics? }
 │
-├─ 1. Validate the request (Zod)                         no model call
+├─ 1. Validate the request (Zod)
+│     Shortcuts (the user already chose the tool, no LLM needed):
+│     ├─ "Show topics" button  → list_topics, return
+│     └─ clicked topic         → list_questions(topic), go to 5
 │
-│     Shortcuts that skip steps 2–4 (the user already chose the tool):
-│     ├─ "Show topics" button  → list_topics, return     no model call
-│     └─ clicked topic         → list_questions(topic), go to step 5b
-│
-├─ 2. Guard: is it a real question?                      LLM
-│     ok | injection | off_topic (structured output)
+├─ 2. Guard: ok | injection | off_topic          LLM   (lib/guard.ts)
 │     blocked → friendly message, stop
-│     (lib/guard.ts)
 │
-├─ 3. Rewrite the question                               LLM
-│     history + new question → one standalone English question
-│     (lib/rewrite.ts)
+├─ 3. Rewrite: history + question                 LLM   (lib/rewrite.ts)
+│     → one standalone English question (query translation)
 │
-├─ 4. Tool choice: the LLM picks tool(s)                  LLM
-│     (lib/agent.ts, tools in lib/tools/)
-│     │
-│     ├─ search_answers(query)  → specific question
-│     │     embed the query                              Embedding
-│     │     find the 5 closest Q&As in Chroma            no model call
-│     │
-│     ├─ list_topics()          → "What can I ask about?"
-│     │     read all categories and tags from Chroma     no model call
-│     │
-│     ├─ list_questions(topic)  → "Tell me about X"
-│     │     all Q&As of one tag or category,
-│     │     the 10 closest to the topic with answers     Embedding
-│     │
-│     └─ no tool                → question doesn't fit the collection
+├─ 4. Tool choice: the LLM picks tool(s)          LLM   (lib/agent.ts, lib/tools/)
+│     ├─ search_answers(query)  → top 5 Q&As       Embedding
+│     ├─ list_topics()          → categories + tags with counts
+│     ├─ list_questions(topic)  → all Q&As of a topic, 10 closest with answers   Embedding
+│     └─ no tool                → "no answer"
 │
-│     The results are not sent back to the LLM (no agent loop):
-│     it never writes the answer, so our code uses them directly.
+├─ 5. Highlight word-for-word passages            LLM   (lib/passages.ts)
+│     passages not found in the source are dropped
+│     search found nothing that answers → list the topic most results share
 │
-├─ 5. Route uses the agent's tool result
-│     │
-│     ├─ list_topics ran        → return the topics, stop
-│     ├─ list_questions ran     → 5b. highlight where the topic is discussed   LLM
-│     ├─ no search ran          → return no sources ("no answer" message)
-│     └─ search_answers ran     → 5a. highlight passages that answer it        LLM
-│           no passage found    → list the topic most of the 5 Q&As share
-│                                 (list_questions + 5b)    Embedding + LLM
-│
-│     Highlighting picks word-for-word sentences (structured output);
-│     the server keeps only passages that really appear in the source
-│     (lib/passages.ts)
-│
-└─ 6. Return the sources that have a passage, with highlights, and the tool calls
+└─ 6. Return sources with highlights + tool calls
 ```
 
-### Progress steps
-
-After validation, the route streams its response as one JSON object per line. The UI shows the newest step next to a spinner, and the last line is the answer:
-
-```
-{"step":"Checking question"}
-{"step":"Rewriting"}
-{"step":"Searching"}
-{"step":"Highlighting passages"}
-{"rewritten":"…","sources":[…],"toolCalls":[…]}
-```
-
-Because the status code is sent with the first line, errors after validation come back as `{"error":"…"}` in the last line instead of a 400/500.
-
-### Model calls per question
-
-
-| Question type                                          | LLM calls                                         | Embedding calls |
-| -------------------------------------------------------- | --------------------------------------------------- | ----------------- |
-| Specific question (search)                             | 4: guard, rewrite, tool choice, passage selection | 1               |
-| Specific question, no passage found (fallback listing) | 5: the 4 above + topic passages                   | 2               |
-| "Tell me about X" (list_questions)                     | 4: guard, rewrite, tool choice, topic passages    | 1               |
-| "What can I ask about?" (list_topics)                  | 3: guard, rewrite, tool choice                    | 0               |
-| Doesn't fit (no tool)                                  | 3: guard, rewrite, tool choice                    | 0               |
-| Blocked by the guard                                   | 1: guard                                          | 0               |
-| Clicked topic                                          | 1: topic passages                                 | 1               |
-| "Show topics" button                                   | 0                                                 | 0               |
-
-The largest calls are the passage selections, because they read the full answers (5 for a search, up to 10 for a topic). The tool-choice call stays small: it only sends the question and the tool schemas.
+The response is streamed as one JSON object per line: `{"step":"Rewriting"}` etc. for the progress indicator, the answer last. The status 200 is already sent then, so later errors come back as `{"error":"…"}` in the last line.
 
 ## Evaluation
 
-The evaluation has two separate steps. Step 1 collects the app's answers and runs our own checks; step 2 scores those collected answers with [RAGAs](https://docs.ragas.io). RAGAs never calls the app itself, it only reads `eval/results.json`.
-
-```
-eval/run.ts  →  /api/chat  →  results.json + summary.json (own checks)
-                                   ↓
-                     eval/ragas_eval.py  →  ragas_scores.json + ragas_summary.json
-```
-
-Always run step 1 first after changing the app. Otherwise RAGAs scores the old answers in `results.json`.
-
-### Setup (once)
-
-RAGAs is a Python library. Create a virtual environment with [uv](https://docs.astral.sh/uv/):
+Step 1 runs the app on test questions with our own checks; step 2 scores the collected answers with [RAGAs](https://docs.ragas.io) (it only reads `eval/results.json`, so always run step 1 first).
 
 ```bash
+# Once: Python env for RAGAs
 uv venv eval/.venv --python 3.12
 uv pip install --python eval/.venv/bin/python -r eval/requirements.txt
-```
 
-### 1. Own checks
-
-With Chroma and `pnpm dev` running:
-
-```bash
+# 1. Own checks (Chroma and pnpm dev running) → eval/results.json, eval/summary.json
 pnpm exec tsx eval/run.ts
-```
 
-Sends every question in `eval/questions.jsonl` to `/api/chat` (uses OpenRouter credit) and writes:
-
-- `eval/results.json`: everything the app returned per question (input for step 2)
-- `eval/summary.json`: hit rates, tool choice, blocked, etc.
-
-### 2. RAGAs scores
-
-```bash
+# 2. RAGAs (LLM judge via OpenRouter) → eval/ragas_scores.json, eval/ragas_summary.json
 eval/.venv/bin/python eval/ragas_eval.py
 ```
 
-Scores the `specific` and `followup` questions with an LLM judge via OpenRouter. This is slower and costs more than step 1, because the judge makes several calls per question. It writes:
-
-- `eval/ragas_scores.json`: the four metrics per question
-- `eval/ragas_summary.json`: the averages
-
-### Compare runs
-
-Both summary files are committed. After a new run, `git diff eval/summary.json eval/ragas_summary.json` shows what changed compared to the last commit.
+Latest results: retrieval hit rate 100%, correct tool choice 100%, injections blocked 5/5, legitimate questions wrongly blocked 0/31. RAGAs: context precision 0.91, context recall 0.97, faithfulness 0.98, answer relevancy 0.4. Both summary files are committed, so `git diff` shows changes between runs.
 
 ## Reflection
 
 ### Core concepts
 
-**How RAG works here.** `pnpm index` embeds every Q&A (question and answer together, one Q&A = one chunk) and stores the vectors in Chroma. At question time the question is rewritten into one standalone English question (query translation), embedded with the same model, and Chroma returns the 5 Q&As with the closest vectors (cosine similarity). The LLM never writes an answer: it only picks word-for-word passages from those Q&As, and the server drops any passage that does not appear in the source.
+**How RAG works here.** `pnpm index` embeds every Q&A (one Q&A = one chunk) into Chroma. At question time the rewritten question is embedded with the same model, and Chroma returns the 5 closest Q&As (cosine similarity). `list_questions` adds structured retrieval: a metadata filter on category/tags combined with vector search.
 
-**How tool calling works.** `lib/agent.ts` binds three LangChain tools to the chat model (`bindTools`). The model reads their names, descriptions and Zod schemas and replies with tool calls instead of text. Our code runs them and takes the raw data from `ToolMessage.artifact` (`responseFormat: "content_and_artifact"`). There is no second LLM round, because the LLM never writes the answer.
+**Design choice: quotes, not generated answers.** The LLM never writes an answer. It only picks word-for-word passages, and the server drops any passage that is not in the source. A spiritual teacher's words should not be paraphrased or invented, so this matters more here than a fluent reply. The cost: it feels less like a normal chatbot, and RAGAs answer relevancy is low (see below).
+
+**How tool calling works.** `lib/agent.ts` binds three LangChain tools to the chat model (`bindTools`). The model reads their names, descriptions and Zod schemas and replies with tool calls. Our code runs them and takes the raw data from `ToolMessage.artifact` (`responseFormat: "content_and_artifact"`). There is no second LLM round, because the LLM never writes the answer.
 
 
-| Tool                    | Used for                                                                                                            |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `search_answers(query)` | A specific question: vector search, top 5                                                                           |
-| `list_topics()`         | "What can I ask about?": all categories and tags with counts                                                        |
-| `list_questions(topic)` | "Tell me about X": all Q&As of one topic.`topic` is a `z.enum` of the names in Chroma, so the LLM cannot invent one |
+| Tool                    | Used for                | Why a separate tool                                                                                                        |
+| ------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `search_answers(query)` | A specific question     | Vector search, top 5                                                                                                       |
+| `list_topics()`         | "What can I ask about?" | Data analysis: counts Q&As per category and tag, no search                                                                 |
+| `list_questions(topic)` | "Tell me about X"       | Metadata filter, returns every Q&A of the topic.`topic` is a `z.enum` of the names in Chroma, so the LLM cannot invent one |
 
-**Code organisation.** One small module per step: `lib/guard.ts`, `lib/rewrite.ts`, `lib/agent.ts`, `lib/passages.ts`, one file per tool in `lib/tools/`, and `lib/env.ts` / `lib/chroma.ts` / `lib/llm.ts` for setup. `app/api/chat/route.ts` only connects the steps. Everything from outside (request body, env vars, Chroma metadata, LLM structured output) is checked with Zod.
+All three read the same collection, but each answers a different kind of request that the others can't: a top-5 search can't list a whole topic or count topics.
 
-**Error scenarios and edge cases handled.**
+**Code organisation.** One small module per step (`lib/guard.ts`, `lib/rewrite.ts`, `lib/agent.ts`, `lib/passages.ts`, one file per tool in `lib/tools/`), setup in `lib/env.ts` / `lib/chroma.ts` / `lib/llm.ts`. The route only connects the steps. Everything from outside (request body, env vars, Chroma metadata, LLM structured output) is checked with Zod.
 
-- Invalid JSON, an empty question, a question over 500 characters or too much history → 400 with a clear message.
-- An unknown topic, OpenRouter or Chroma down, or the LLM calls a tool that does not exist → an `error` field in the streamed answer (the status 200 is already sent, see "Progress steps"). The UI shows a generic message; details only in the server log.
-- Missing or invalid env vars → a clear error listing the bad variables as soon as `lib/env.ts` is loaded.
-- Prompt injection and off-topic questions → blocked by the guard before any other LLM call. All prompts also wrap user text and sources in tags and treat them as data.
-- The LLM misquotes a passage → the passage is dropped, so a highlight never contains words Lama Ole didn't say.
-- No tool fits → "no answer" instead of an invented one. Search finds Q&As but none answers the question → the app lists the topic most of them share.
+**Errors and edge cases.**
+
+- Invalid JSON, empty or too long question (> 500 chars), too much history → 400 with a clear message.
+- Unknown topic, OpenRouter or Chroma down, unknown tool → `error` in the stream; the UI shows a generic message, details only in the server log.
+- Missing or invalid env vars → clear error at startup (`lib/env.ts`).
+- Prompt injection and off-topic questions → blocked by the guard before any other LLM call. All prompts wrap user text and sources in tags and treat them as data.
+- Misquoted passage → dropped. No tool fits → "no answer" instead of an invented one.
 - Follow-ups and non-English questions → resolved by the rewrite step.
 
 ### Known problems and improvements
 
-- **Slow answers.** Up to 5 LLM calls run one after another (see the table above), so an answer takes several seconds. The UI shows the current step, but the cards only appear at the end. Improvement: send the source cards as soon as the search is done and add the highlights when they are ready.
-- **No similarity threshold.** Weak matches still go to passage selection; only the LLM decides that nothing fits. Improvement: tune a score threshold on the eval questions.
-- **Follow-ups are weaker** (2/3 in `eval/summary.json`). The history only contains earlier questions, not what was shown. Improvement: send the shown Q&A titles as context to the rewrite step.
-- **Low RAGAs answer relevancy (0.4).** The "answer" is a set of quoted passages, not a reply written to the question, so this metric is not a good fit. Retrieval (precision 0.91, recall 0.97) and faithfulness (0.98) are high.
-- **The guard is an LLM.** It can be fooled or block a valid question. It only decides ok/blocked and never writes text, so the damage is limited. A small eval set (5 attacks) is not proof.
-- **Cost and abuse.** No rate limiting or authentication, so anyone with the URL can spend OpenRouter credit. Improvement: rate limit per IP.
-- **Static data.** `data/qa.jsonl` is a snapshot; new Q&As on the website need a manual re-run of the scripts. Improvement: scheduled re-fetch and re-index.
-- **Extra Chroma reads.** Each question reads all metadata to build the topic list for `list_questions`. Fine for ~270 Q&As, but it should be cached for a larger collection.
+- **Slow answers.** Up to 5 LLM calls run one after another. Improvement: send the source cards right after the search, highlights later.
+- **One chunk per Q&A.** Most Q&As are short (median 224 words), but the longest has 1,452 words, so its vector blurs several topics. Improvement: split long answers into paragraphs and link chunks back to their Q&A.
+- **No similarity threshold.** Weak matches still go to passage selection; only the LLM decides nothing fits. Improvement: tune a threshold on the eval questions.
+- **Follow-ups are weaker** (2/3). The history only contains earlier questions, not what was shown. Improvement: also send the shown Q&A titles to the rewrite step.
+- **Low answer relevancy (0.4).** RAGAs expects a reply written to the question, not quoted passages, so the metric fits this design poorly. Retrieval and faithfulness are high.
+- **The guard is an LLM.** It can be fooled or block a valid question, but it only returns a verdict, never text. 5 test attacks are not proof.
+- **Cost and abuse.** No rate limiting or authentication. Improvement: rate limit per IP.
+- **Static data.** New Q&As on the website need a manual re-fetch and re-index.
+- **Extra Chroma reads.** Each question reads all metadata to build the topic enum. Fine for 271 Q&As; cache it for a larger collection.
