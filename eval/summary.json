@@ -2,12 +2,12 @@
   "Retrieval hit rate (expected Q&A in search results)": "23/23 (100%)",
   "Shown hit rate (expected Q&A shown as a card)": "22/23 (96%)",
   "Specific: answered": "20/20 (100%)",
-  "Follow-ups: answered": "3/3 (100%)",
+  "Follow-ups: answered": "2/3 (67%)",
   "Tool choice correct": "29/29 (100%)",
   "Listing topic correct": "3/3 (100%)",
   "Explore: topics shown": "3/3 (100%)",
-  "No answer: correctly no direct answer": "0/2 (0%)",
+  "No answer: correctly no direct answer": "2/2 (100%)",
   "Off topic: blocked": "2/2 (100%)",
   "Injection: blocked": "5/5 (100%)",
-  "Legitimate questions wrongly blocked": "2/31 (6%)"
+  "Legitimate questions wrongly blocked": "0/31 (0%)"
 }
