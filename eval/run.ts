@@ -49,7 +49,9 @@ async function ask(test: TestQuestion): Promise<ChatResponse> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text: test.question, history: test.history }),
   });
-  return response.json();
+  // The answer is the last line; the lines before it are progress steps.
+  const text = await response.text();
+  return JSON.parse(text.trim().split("\n").at(-1)!);
 }
 
 // Which of the five outcomes the response shows. Same order of checks as the UI.

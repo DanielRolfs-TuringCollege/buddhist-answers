@@ -35,37 +35,56 @@ export async function POST(request: Request) {
     return Response.json({ error: z.prettifyError(parsed.error) }, { status: 400 });
   }
 
-  // 2. Rewrite, search and highlight. If OpenRouter or Chroma fails, that's our
-  //    fault → 500, with details only in the server log.
+  // 2. Stream the answer as one JSON object per line: a { step } before each slow step,
+  //    so the UI can show progress, and the answer itself as the last line.
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (data: unknown) => controller.enqueue(encoder.encode(JSON.stringify(data) + "\n"));
+      const response = await answer(parsed.data, (step) => send({ step }));
+      send(await response.json());
+      controller.close();
+    },
+  });
+  return new Response(stream, { headers: { "Content-Type": "application/x-ndjson" } });
+}
+
+// Rewrite, search and highlight. Calls step() before each slow step.
+// The status code (200) is already sent when this runs, so errors go into the answer's `error` field.
+async function answer(input: z.infer<typeof requestSchema>, step: (name: string) => void) {
+  // If OpenRouter or Chroma fails, that's our fault: details only in the server log.
   try {
     // The "Show topics" button: like a clicked topic, no LLM has to choose the tool.
-    if (parsed.data.showTopics) {
+    if (input.showTopics) {
       return Response.json({ rewritten: "What topics can I ask about?", sources: [], topics: await listTopics() });
     }
 
     // A clicked topic: the user already chose the tool and its argument, so no LLM has to.
-    const { topic } = parsed.data;
+    const { topic } = input;
     if (topic) {
       const { categories, tags } = await listTopics();
       if (![...categories, ...tags].some((known) => known.name === topic)) {
-        return Response.json({ error: `Unknown topic "${topic}"` }, { status: 400 });
+        return Response.json({ error: `Unknown topic "${topic}"` });
       }
       // Stands in for the rewritten question, so follow-ups have something to refer to.
       return respondWithListing(`Tell me about ${topic}`, await listQuestions(topic));
     }
 
     // Typed text goes to the LLMs, so check it first. Blocked → no rewrite, agent or search.
-    const { verdict, reason } = await checkMessage(parsed.data.text);
+    step("Checking question");
+    const { verdict, reason } = await checkMessage(input.text);
     if (verdict !== "ok") {
       console.log(`[chat] blocked (${verdict}):`, reason);
       return Response.json({ rewritten: "", sources: [], blocked: BLOCKED_MESSAGES[verdict] });
     }
 
     // Search with a standalone English question, not the raw (maybe follow-up) text.
-    const rewritten = await rewriteQuestion(parsed.data.text, parsed.data.history);
+    step("Rewriting");
+    const rewritten = await rewriteQuestion(input.text, input.history);
     console.log("[chat] rewritten question:", rewritten);
 
     // Let the agent pick a tool. The route then uses that tool's result.
+    step("Searching");
     const toolResults = await runAgent(rewritten);
     console.log("[chat] tool results:", toolResults);
     // Every response below also sends the tool calls, so the UI can show what the agent did.
@@ -79,6 +98,7 @@ export async function POST(request: Request) {
     const listingResult = toolResults.find((toolResult) => toolResult.name === "list_questions");
     if (listingResult) {
       // Safe cast: the artifact of list_questions is always its TopicListing.
+      step("Highlighting passages");
       return respondWithListing(rewritten, listingResult.result as TopicListing, toolResults);
     }
 
@@ -90,6 +110,7 @@ export async function POST(request: Request) {
     // Safe cast: the artifact of search_answers is always its SearchResult list.
     const sources = searchResult.result as SearchResult;
 
+    step("Highlighting passages");
     const passages = await selectPassages(rewritten, sources);
 
     // None of the found Q&As answers the question. Instead of "no answer", list the topic
@@ -107,10 +128,7 @@ export async function POST(request: Request) {
     return Response.json({ rewritten, sources: withHighlights(sources, passages), toolCalls: toolResults });
   } catch (error) {
     console.error("[chat] request failed:", error);
-    return Response.json(
-      { error: "The answer could not be created right now. Please try again." },
-      { status: 500 },
-    );
+    return Response.json({ error: "The answer could not be created right now. Please try again." });
   }
 }
 

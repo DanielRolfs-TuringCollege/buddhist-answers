@@ -31,7 +31,7 @@ The sources are in English. German questions are accepted (query translation tur
 | Embeddings | `openai/text-embedding-3-small` via OpenRouter `/api/v1/embeddings` (`OpenAIEmbeddings` with OpenRouter `baseURL`) |
 | Vector DB | Chroma, running locally via Docker (`docker run -p 8000:8000 chromadb/chroma`), accessed with the official `chromadb` JS client (no LangChain wrapper: `@langchain/community` is deprecated) |
 | Validation | Zod (request body, tool arguments, guard output) |
-| Streaming | Own Server-Sent Events (SSE) from a Next.js route handler, read in React |
+| Streaming | Own stream of JSON lines (one object per line) from a Next.js route handler, read in React |
 | Chat history | React state only; full history is sent with each request |
 | Evaluation | TS script collects results → Python script with the `ragas` library scores them |
 
@@ -90,10 +90,10 @@ User message + chat history
    │  the server keeps only passages that really appear in the source text
    │
    ▼
-6. Sources (full text + highlights), tool results, and a done event are sent to the UI
+6. Sources (full text + highlights) and tool results are sent to the UI as the last line
 ```
 
-Every step sends SSE events, so the UI can show progress (see §8).
+Before each slow step the route sends a progress line, so the UI can show what it is working on (see §8).
 
 ---
 
@@ -117,7 +117,7 @@ The agent receives the rewritten question. The UI shows it ("Searched for: …")
 
 | Tool | Request type | What it does |
 |---|---|---|
-| `search_answers(query, tag?, top_k=5)` | Specific question | Vector search, optionally filtered by one tag. Returns answers + similarity scores. |
+| `search_answers(query)` | Specific question | Vector search over the whole collection, top 5. Returns answers + similarity scores. |
 | `list_topics()` | Exploring | Returns all categories and tags with counts. Also tells the LLM which tag names are valid. |
 | `list_questions(topic)` | "Show me everything about X", "What else should I know about X?" | All Q&As of one tag or category (`where` filter). The 10 closest to the topic (vector search inside the filter) get highlighted passages where the topic is discussed; the rest are listed as question + URL. |
 
@@ -125,7 +125,7 @@ The agent receives the rewritten question. The UI shows it ("Searched for: …")
 
 **Why `list_questions` exists:** a broad topic question has no specific question for vector search to match, so `search_answers` finds unrelated Q&As and passage selection rejects them all. `topic` accepts any tag or category name from `list_topics()` (the tag "Meditation" has 7 Q&As, the category "View and Meditation" has 106). Highlighting is capped at 10 Q&As to keep the LLM call small.
 
-Tool arguments are validated with Zod. A failing tool fails the request (500, details in the server log): there is no second LLM round to return the error to.
+Tool arguments are validated with Zod. A failing tool fails the request (`error` in the answer, details in the server log): there is no second LLM round to return the error to.
 
 ---
 
@@ -139,28 +139,29 @@ Instead of a generated answer, the user sees the original Q&As with the answerin
 4. The LLM replies with structured output (`{ passages: [{ n, text }] }`, Zod schema, `strict: true`). The server drops every passage that does not appear verbatim in its source, so a highlight can never contain words he didn't say.
 5. **Similarity threshold:** if the best score is below the threshold (tune on test questions), reply:
    *"There's no answer from Lama Ole on this topic in the collection."* (also shown when no source gets a passage) and suggest related topics via `list_topics()`.
-6. Use a tag filter only with names returned by `list_topics()`.
-7. One tool-choice LLM call per question, no agent loop (saves one LLM call per question). Valid tag names go into the `search_answers` schema as a `z.enum`, so no `list_topics` → `search_answers` chaining is needed.
+6. One tool-choice LLM call per question, no agent loop (saves one LLM call per question). Valid topic names go into the `list_questions` schema as a `z.enum`, so no `list_topics` → `list_questions` chaining is needed.
 
 ---
 
-## 8. Streaming (own SSE)
+## 8. Streaming (progress steps)
 
-The route `POST /api/chat` returns `text/event-stream`. Event types:
+Invalid input (bad JSON, failed Zod check) gets plain JSON with status 400. After that, `POST /api/chat` streams its response as one JSON object per line (`application/x-ndjson`): a `{ step }` before each slow step, then the answer as the last line.
 
 ```
-event: status      data: {"step": "guard" | "rewrite" | "agent" | "highlight"}
-event: rewrite     data: {"original": "and jealousy?", "rewritten": "What does Lama Ole say about jealousy…?"}
-event: tool_start  data: {"id": "t1", "name": "search_answers", "args": {"query": "jealousy", "tag": null}}
-event: tool_end    data: {"id": "t1", "result": [...]}          // full result, used by the popover
-event: sources     data: [{"n": 1, "question": "...", "url": "...", "tags": [...], "score": 0.82,
-                           "segments": [{"text": "...", "highlight": false}, {"text": "...", "highlight": true}]}]
-event: blocked     data: {"reason": "injection" | "off_topic", "message": "..."}
-event: error       data: {"message": "..."}
-event: done        data: {"no_match": false}
+{"step":"Checking question"}
+{"step":"Rewriting"}
+{"step":"Searching"}
+{"step":"Highlighting passages"}
+{"rewritten":"…","sources":[…],"toolCalls":[…]}      // or {"error":"…"}
 ```
 
-The React client reads the stream with `fetch` + `ReadableStream`, updates the message as events arrive, and shows the progress steps.
+Each `step(...)` is called right before the real work it names, so the UI always shows what the server is doing at that moment. Only typed questions send steps; a clicked topic and "Show topics" show the default spinner text.
+
+Why not full SSE with separate events (`rewrite`, `tool_start`, `sources`, …): nothing on screen changes until the highlights are ready, so only the steps need streaming. Plain JSON lines need no SSE parsing.
+
+The status code is sent with the first line, so errors after validation (unknown topic, OpenRouter or Chroma down) come back as `{"error": …}` in the last line, not as a 400/500.
+
+The React client reads the stream with `fetch` + `ReadableStream`, shows the newest step next to a spinner, and uses the last line as the answer. `eval/run.ts` only parses the last line.
 
 ---
 
@@ -216,25 +217,25 @@ On mobile, the topic sidebar becomes a "Topics" button that opens a sheet.
 
 | UI element | Purpose | Backed by |
 |---|---|---|
-| Chat window | Main question/answer flow | SSE `sources` event |
-| Progress steps (Checked → Rewritten → Searching → Writing) | Progress indicator for long operations | SSE `status` events |
-| "Searched for: …" line | Shows the rewritten question | SSE `rewrite` event |
-| Tool chips ("Searched 'Anger'") | Shows which tools ran | SSE `tool_start` / `tool_end` |
-| **Tool popover** (click on a chip) | Visualises the tool result (see below) | `tool_end.result` |
-| Source cards | Question title, full answer with highlighted passages, tags, link to original page | SSE `sources` (`segments`) |
+| Chat window | Main question/answer flow | last line of the stream (the answer) |
+| Progress steps (Checking question → Rewriting → Searching → Highlighting passages) | Progress indicator for long operations | `{ step }` lines |
+| "Searched for: …" line | Shows the rewritten question | `rewritten` in the answer |
+| Tool chips ("Searched 'Anger'") | Shows which tools ran | `toolCalls` in the answer |
+| **Tool popover** (click on a chip) | Visualises the tool result (see below) | `toolCalls[].result` |
+| Source cards | Question title, full answer with highlighted passages, tags, link to original page | `sources` in the answer (`segments`) |
 | "Open original page" link | Lets users verify the answer on the real website | `url` metadata |
 | Topic sidebar with counts | Browse and explore | `list_topics()` |
 | Clicking a topic | Shows the questions for that tag or category, the top 10 with highlights | `list_questions(topic)` |
-| Tag chip on a source card | Click = ask again filtered to that tag | `search_answers(query, tag)` |
+| Tag chip on a source card | Click = list the Q&As of that tag | `list_questions(tag)` |
 | Related questions | Follow-up reading | 2nd `search_answers` call using the top answer's text |
 | No-match state | "No answer on this in the collection. Try these topics: …" | Similarity threshold + `list_topics()` |
-| Blocked state | Friendly message for injection/off-topic attempts | SSE `blocked` |
+| Blocked state | Friendly message for injection/off-topic attempts | `blocked` in the answer |
 
 ### Tool-call visualisation (popover)
 
 | Tool | Popover content |
 |---|---|
-| `search_answers` | Arguments (query, tag) + list of results with a horizontal bar per similarity score; threshold shown as a line |
+| `search_answers` | Argument (query) + list of results with a horizontal bar per similarity score; threshold shown as a line |
 | `list_topics` | Tags with counts as a small bar list |
 | `list_questions` | Topic name, number of results, list of question links |
 
@@ -250,9 +251,8 @@ On mobile, the topic sidebar becomes a "Topics" button that opens a sheet.
 
 ## 11. Error handling
 
-- Chroma not reachable / OpenRouter error / timeout → SSE `error` event with a readable message; UI shows a retry button.
-- Tool errors fail the request with a friendly 500 message (details only in the server log).
-- Stream aborted by the user (new question / page closed) → server stops work (`AbortSignal`).
+- Chroma not reachable / OpenRouter error / tool error → `{"error": …}` as the last line; the UI shows a generic message and the user can send again (details only in the server log).
+- Not built: stopping the server's work when the user leaves the page (`AbortSignal`).
 
 ---
 
@@ -310,7 +310,7 @@ Next: compare **plain pipeline** (always search → highlight) vs. **agent with 
 ```
 app/
   page.tsx                  chat page
-  api/chat/route.ts         SSE endpoint (pipeline)
+  api/chat/route.ts         streaming endpoint (pipeline)
   api/topics/route.ts       topic sidebar data
 components/                 chat, source cards, tool popover, sidebar (+ components/ui from shadcn)
 lib/
@@ -323,7 +323,6 @@ lib/
   rewrite.ts                query translation
   tools/                    search_answers, list_topics, list_questions
   agent.ts                  tool choice (one LLM call) + system prompt
-  sse.ts                    SSE helpers (server + client event types)
 scripts/
   fetch-qa.ts               collect data
   index.ts                  build Chroma index (read qa.jsonl → embed → upsert, all in one file)
@@ -347,7 +346,7 @@ Each milestone is split into small steps; every step = one micro commit.
 4. **Plain RAG:** question → search → full Q&As with highlighted passages (no tools yet, no streaming).
 5. **Tools:** add the 3 tools + tool choice (one LLM call).
 6. **Query translation:** rewrite with history.
-7. **Streaming:** SSE route + client reader + progress steps.
+7. **Streaming:** progress steps as JSON lines + client reader.
 8. **UI:** chat window, source cards with highlights, topic sidebar.
 9. **Tool popover:** visualisation of tool results.
 10. **Prompt injection:** validation, guard classifier, hardened prompt.

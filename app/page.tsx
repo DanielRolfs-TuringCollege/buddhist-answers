@@ -39,6 +39,8 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The step the server is working on, e.g. "Rewriting". Null until the first step arrives.
+  const [step, setStep] = useState<string | null>(null);
   // Points to the newest message, so we can scroll it into view.
   const lastMessageRef = useRef<HTMLDivElement>(null);
 
@@ -64,6 +66,7 @@ export default function Home() {
   async function ask(text: string, options: { topic?: string; showTopics?: boolean } = {}) {
     setIsLoading(true);
     setError(null);
+    setStep(null);
 
     let data: Omit<Message, "id" | "text">;
 
@@ -87,7 +90,23 @@ export default function Home() {
         throw new Error("Chat request failed");
       }
 
-      data = await response.json();
+      // The server sends one JSON object per line: a { step } while it works, the answer last.
+      const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+      let streamed = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        streamed += value;
+        // The second-to-last piece is the newest complete line (the last one may still be arriving).
+        const newest = JSON.parse(streamed.split("\n").at(-2) ?? "{}");
+        if (newest.step) setStep(newest.step);
+      }
+
+      const answer = JSON.parse(streamed.trim().split("\n").at(-1)!);
+      if (answer.error) {
+        throw new Error(answer.error);
+      }
+      data = answer;
     } catch {
       setError("We could not process your question. Please try again.");
       return false;
@@ -221,6 +240,14 @@ export default function Home() {
         {/* Sticks to the bottom of the screen; the background hides answers scrolling behind it. */}
         <div className="sticky bottom-0 mt-8 bg-stone-100 pb-6 pt-2">
           {error && <p className="mb-2 text-sm text-red-700">{error}</p>}
+
+          {/* Shown while the server checks, rewrites, searches and highlights (several seconds). */}
+          {isLoading && (
+            <p className="mb-2 flex items-center gap-2 text-sm text-stone-500" role="status">
+              <span className="size-4 animate-spin rounded-full border-2 border-stone-300 border-t-amber-700" />
+              {step ?? "Searching Lama Ole's answers"}…
+            </p>
+          )}
 
           <form
             className="flex items-end gap-3 rounded-2xl border border-stone-200 bg-white p-3 shadow-sm"
