@@ -2,6 +2,8 @@
 
 A Next.js RAG app that answers questions with quotes from Lama Ole Nydahl's Q&As (`data/qa.jsonl`, 271 Q&As), using a local Chroma vector database.
 
+The Q&As come from [lama-ole-nydahl.org/questions](https://lama-ole-nydahl.org/questions/). They were fetched once (2026-09-24) through the site's WordPress REST API (`/wp-json/wp/v2/posts`, plus categories and tags), with HTML stripped and saved as one JSON object per line.
+
 Optional tasks: source citations (easy), prompt injection protection (medium), tool call result visualisation in a popover (medium), RAGAs evaluation (hard).
 
 ## Setup
@@ -9,7 +11,7 @@ Optional tasks: source citations (easy), prompt injection protection (medium), t
 Requirements: Node.js, [pnpm](https://pnpm.io), [Docker](https://www.docker.com) and an [OpenRouter](https://openrouter.ai) API key.
 
 1. `pnpm install`
-2. Create `.env.local`:
+2. Copy `.env.example` to `.env.local` and add your key:
 
    ```bash
    OPENROUTER_API_KEY=sk-or-...
