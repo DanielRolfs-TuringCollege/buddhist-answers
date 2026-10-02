@@ -258,40 +258,50 @@ On mobile, the topic sidebar becomes a "Topics" button that opens a sheet.
 
 ## 12. Evaluation
 
+The app never writes an answer: it retrieves whole Q&As and highlights verbatim passages. So the evaluation focuses on **retrieval** and **behaviour** (right tool, blocked, no answer). Generation metrics are only a sanity check.
+
 ### Test set: `eval/questions.jsonl`
 
-20 test questions covering all request types + attack prompts:
+38 hand-written test questions, one JSON object per line. Expected URLs are real Q&As from `data/qa.jsonl`.
 
-- 10 specific ("What does he say about jealousy?"), each with a short reference answer
-- 5 exploring ("What can I ask about?")
-- 3 "show everything" ("All answers about dreams")
-- 2 out-of-scope (should trigger the no-match message)
-- 3 follow-ups with history (tests query translation)
-- 5 prompt injection attacks (should be blocked)
+| Type | Count | Expected behaviour |
+|---|---|---|
+| `specific` | 20 (2 in German) | answer; expected URL(s) + short reference answer |
+| `followup` | 3 (1 German), with `history` | answer; tests query translation |
+| `explore` | 3 | topics (`list_topics`) |
+| `listing` | 3 | listing (`list_questions` with `expected_topic`) |
+| `no_answer` | 2 | no direct answer (in the domain, but not in the collection) |
+| `off_topic` | 2 | blocked |
+| `injection` | 5 | blocked |
 
-For each, note the expected source URL(s) / expected tool / expected behaviour.
+Specific questions are worded differently from the stored questions, so retrieval isn't trivial.
 
 ### Own checks (TS, `eval/run.ts`)
 
-1. **Retrieval hit rate:** is an expected source in the results?
-2. **Tool choice:** did the LLM pick the right tool?
-3. **No-match correctness:** do out-of-scope questions get the no-match reply?
-4. **Injection block rate:** are attacks blocked by the guard?
+Run: `pnpm exec tsx eval/run.ts` (needs `pnpm dev` and Chroma running). It calls the real `/api/chat` endpoint, so it tests exactly what the UI gets, and prints:
 
-`eval/run.ts` runs every question through the pipeline and writes `eval/results.json` (question, rewritten question, retrieved contexts, answer = the highlighted passages joined, reference answer, tools used).
+1. **Retrieval hit rate:** is an expected Q&A among the search results?
+2. **Shown hit rate:** is an expected Q&A shown as a card (survived passage selection)?
+3. **Tool choice / listing topic:** did the LLM pick the right tool and topic?
+4. **Behaviour per type:** answered, topics shown, no direct answer, blocked.
+5. **False blocks:** legitimate questions the guard blocked.
+
+It writes `eval/results.json` (question, history, rewritten question, tools, all retrieved Q&As, shown URLs, highlights, reference, checks) and `eval/summary.json` (the summary table, to compare runs with `git diff`).
 
 ### RAGAs (Python, `eval/ragas_eval.py`)
 
-Reads `eval/results.json` and scores it with the `ragas` library (LLM judge via OpenRouter):
+Setup once: `uv venv eval/.venv --python 3.12 && uv pip install --python eval/.venv/bin/python -r eval/requirements.txt`. Run: `eval/.venv/bin/python eval/ragas_eval.py`.
 
-| Metric | Question it answers |
-|---|---|
-| Faithfulness | Is every claim in the answer supported by the retrieved sources? (Close to 1 by design, since highlights are verbatim: a sanity check.) |
-| Answer relevancy | Do the highlighted passages address the question? |
-| Context precision | Were the retrieved sources relevant and ranked well? |
-| Context recall | Were all sources needed for the reference answer retrieved? |
+Scores only `specific` + `followup` questions (the others have no answer to judge). LLM judge: `openai/gpt-4o-mini` via OpenRouter. Writes `eval/ragas_scores.json`.
 
-Compare **plain pipeline** (always search → highlight) vs. **agent with 3 tools**, and **with vs. without query rewrite**.
+| Metric | Role | Question it answers |
+|---|---|---|
+| Context precision | **main** | Are the 5 retrieved Q&As relevant to the reference, and are the relevant ones ranked first? |
+| Context recall | **main** | Do the retrieved Q&As cover everything in the reference answer? |
+| Faithfulness | sanity check | Is every claim in the highlights supported by the sources? The app already guarantees verbatim highlights (`lib/passages.ts` drops any passage not found in its source), so this mostly measures the judge. |
+| Answer relevancy | secondary | Do the highlights address the question? Weak fit: it generates questions from the "answer" and scores 0 when the judge finds the text noncommittal, which happens with hedged verbatim quotes. |
+
+Next: compare **plain pipeline** (always search → highlight) vs. **agent with 3 tools**, and **with vs. without query rewrite**.
 
 ---
 

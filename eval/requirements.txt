@@ -1,0 +1,4 @@
+ragas==0.4.3
+# ragas 0.4.3 imports a module that langchain-community 0.4 removed.
+langchain-community<0.4
+openai

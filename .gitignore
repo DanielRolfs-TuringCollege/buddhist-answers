@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local Chroma database (Docker volume)
 /chroma-data
+
+# Python venv for the RAGAs evaluation
+/eval/.venv

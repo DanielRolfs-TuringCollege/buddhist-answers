@@ -1,0 +1,186 @@
+[
+  {
+    "id": "s01",
+    "question": "Is jealousy the same as envy?",
+    "context_precision": 0.9999999999,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.7985011154318221
+  },
+  {
+    "id": "s02",
+    "question": "Anger suddenly takes over me. What can I do in that moment?",
+    "context_precision": 0.8874999999778125,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.646879428281597
+  },
+  {
+    "id": "s03",
+    "question": "Isn't it healthier to let my anger out than to keep it inside?",
+    "context_precision": 0.9999999999666667,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.0
+  },
+  {
+    "id": "s04",
+    "question": "How should I deal with a separation from my partner?",
+    "context_precision": 0.99999999998,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.0
+  },
+  {
+    "id": "s05",
+    "question": "My fears keep coming back. How do I get rid of them?",
+    "context_precision": 0.999999999975,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.5278173281584121
+  },
+  {
+    "id": "s06",
+    "question": "Can I train myself to remember my dreams?",
+    "context_precision": 0.94999999997625,
+    "context_recall": 0.6666666666666666,
+    "faithfulness": 0.875,
+    "answer_relevancy": 0.0
+  },
+  {
+    "id": "s07",
+    "question": "How do I break bad habits?",
+    "context_precision": 0.699999999965,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.2477781878563853
+  },
+  {
+    "id": "s08",
+    "question": "How can I become more self-confident?",
+    "context_precision": 0.8666666666377778,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.38055883831564197
+  },
+  {
+    "id": "s09",
+    "question": "My grief after a death won't go away. What should I do?",
+    "context_precision": 0.9999999999,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.7541588797949511
+  },
+  {
+    "id": "s10",
+    "question": "Is it ever okay to lie?",
+    "context_precision": 0.699999999965,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.0
+  },
+  {
+    "id": "s11",
+    "question": "What does equanimity mean?",
+    "context_precision": 0.49999999995,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.9986026743072706
+  },
+  {
+    "id": "s12",
+    "question": "How can I help a friend who is depressed all the time?",
+    "context_precision": 0.9999999999,
+    "context_recall": 0.6666666666666666,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.4587004431496977
+  },
+  {
+    "id": "s13",
+    "question": "Does Buddhism have methods for dealing with physical pain?",
+    "context_precision": 0.99999999995,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.0
+  },
+  {
+    "id": "s14",
+    "question": "What is the difference between love and attachment?",
+    "context_precision": 0.699999999965,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.5207804668138423
+  },
+  {
+    "id": "s15",
+    "question": "How can I become more patient?",
+    "context_precision": 0.9999999999,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.633686939131914
+  },
+  {
+    "id": "s16",
+    "question": "Should parents stay together for the kids when the relationship is failing?",
+    "context_precision": 0.7555555555303703,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.3835701896119832
+  },
+  {
+    "id": "s17",
+    "question": "What do drugs do to the mind according to Buddhism?",
+    "context_precision": 0.999999999975,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.6900862291980759
+  },
+  {
+    "id": "s18",
+    "question": "My thoughts are racing. How can I calm them?",
+    "context_precision": 0.99999999995,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.40959987980054263
+  },
+  {
+    "id": "s19",
+    "question": "Wie kann ich meinen Stolz \u00fcberwinden?",
+    "context_precision": 0.94999999997625,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.3909057206264592
+  },
+  {
+    "id": "s20",
+    "question": "Was bedeuten Tr\u00e4ume im Buddhismus?",
+    "context_precision": 0.99999999995,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.31172714976710225
+  },
+  {
+    "id": "f01",
+    "question": "Earlier question: How can I deal with anger in my relationship?\nFollow-up: and what about jealousy?",
+    "context_precision": 0.8666666666377778,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.6472927208797071
+  },
+  {
+    "id": "f02",
+    "question": "Earlier question: What is the meaning of dreams in Buddhism?\nFollow-up: can I remember them better when I wake up?",
+    "context_precision": 0.94999999997625,
+    "context_recall": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.0
+  },
+  {
+    "id": "f03",
+    "question": "Earlier question: Wie gehe ich mit Angst um?\nFollow-up: Und wie geht das ganz schnell?",
+    "context_precision": 0.9999999999,
+    "context_recall": 1.0,
+    "faithfulness": 0.75,
+    "answer_relevancy": 0.45478353249857867
+  }
+]

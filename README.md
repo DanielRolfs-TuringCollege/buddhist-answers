@@ -108,3 +108,52 @@ POST /api/chat { text, history }
 | Doesn't fit (no tool) | 2: rewrite, tool choice | 0 |
 
 The largest call is passage selection, because it reads the 5 full answers. The tool-choice call stays small: it only sends the question and the tool schemas.
+
+## Evaluation
+
+The evaluation has two separate steps. Step 1 collects the app's answers and runs our own checks; step 2 scores those collected answers with [RAGAs](https://docs.ragas.io). RAGAs never calls the app itself, it only reads `eval/results.json`.
+
+```
+eval/run.ts  →  /api/chat  →  results.json + summary.json (own checks)
+                                   ↓
+                     eval/ragas_eval.py  →  ragas_scores.json + ragas_summary.json
+```
+
+Always run step 1 first after changing the app. Otherwise RAGAs scores the old answers in `results.json`.
+
+### Setup (once)
+
+RAGAs is a Python library. Create a virtual environment with [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv venv eval/.venv --python 3.12
+uv pip install --python eval/.venv/bin/python -r eval/requirements.txt
+```
+
+### 1. Own checks
+
+With Chroma and `pnpm dev` running:
+
+```bash
+pnpm exec tsx eval/run.ts
+```
+
+Sends every question in `eval/questions.jsonl` to `/api/chat` (uses OpenRouter credit) and writes:
+
+- `eval/results.json`: everything the app returned per question (input for step 2)
+- `eval/summary.json`: hit rates, tool choice, blocked, etc.
+
+### 2. RAGAs scores
+
+```bash
+eval/.venv/bin/python eval/ragas_eval.py
+```
+
+Scores the `specific` and `followup` questions with an LLM judge via OpenRouter. This is slower and costs more than step 1, because the judge makes several calls per question. It writes:
+
+- `eval/ragas_scores.json`: the four metrics per question
+- `eval/ragas_summary.json`: the averages
+
+### Compare runs
+
+Both summary files are committed. After a new run, `git diff eval/summary.json eval/ragas_summary.json` shows what changed compared to the last commit.
