@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { FeedbackButtons, type Vote } from "@/components/feedback-buttons";
 import { MoreQuestions } from "@/components/more-questions";
 import { type Source, SourceCard } from "@/components/source-card";
 import { type ToolCall, ToolCalls } from "@/components/tool-calls";
@@ -20,6 +21,8 @@ type Message = {
   toolCalls?: ToolCall[];
   // Only set when the guard blocked the question: the text to show instead of an answer.
   blocked?: string;
+  // The user's thumbs up/down, once they clicked one.
+  vote?: Vote;
 };
 
 type Listing = {
@@ -31,6 +34,27 @@ type Listing = {
   fallback: boolean;
 };
 
+// What one tool call found, for the feedback log: the Q&As without their long answer texts.
+function summarizeToolCall(toolCall: ToolCall) {
+  switch (toolCall.name) {
+    case "search_answers":
+      return {
+        tool: toolCall.name,
+        args: toolCall.args,
+        found: toolCall.result.map(({ question, url, score }) => ({ question, url, score })),
+      };
+    case "list_questions":
+      return {
+        tool: toolCall.name,
+        args: toolCall.args,
+        found: toolCall.result.sources.map(({ question, url }) => ({ question, url })),
+      };
+    case "list_topics":
+      // Only topic names and counts: nothing was retrieved to judge.
+      return { tool: toolCall.name, args: {}, found: [] };
+  }
+}
+
 // How many earlier questions are sent along, so follow-ups can be understood.
 const HISTORY_LENGTH = 1;
 
@@ -41,6 +65,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   // The step the server is working on, e.g. "Rewriting". Null until the first step arrives.
   const [step, setStep] = useState<string | null>(null);
+  // Identifies this chat in the server's feedback log. A reload starts a new session.
+  const [sessionId] = useState(() => crypto.randomUUID());
   // Points to the newest message, so we can scroll it into view.
   const lastMessageRef = useRef<HTMLDivElement>(null);
 
@@ -68,7 +94,7 @@ export default function Home() {
     setError(null);
     setStep(null);
 
-    let data: Omit<Message, "id" | "text">;
+    let data: Omit<Message, "id" | "text" | "vote">;
 
     try {
       const response = await fetch("/api/chat", {
@@ -116,6 +142,33 @@ export default function Home() {
 
     setMessages((currentMessages) => [...currentMessages, { id: Date.now(), text, ...data }]);
     return true;
+  }
+
+  // Shows the thumbs up/down on one message and sends it to the question log with a short
+  // version of the answer. Every click is sent, so a changed vote shows up as a later line.
+  function handleVote(votedMessage: Message, vote: Vote) {
+    setMessages((currentMessages) =>
+      currentMessages.map((earlier) => (earlier.id === votedMessage.id ? { ...earlier, vote } : earlier)),
+    );
+
+    fetch("/api/feedback", {
+      body: JSON.stringify({
+        vote,
+        sessionId,
+        text: votedMessage.text,
+        retrieved: (votedMessage.toolCalls ?? []).map(summarizeToolCall),
+        result: {
+          rewritten: votedMessage.rewritten,
+          blocked: votedMessage.blocked,
+          topic: votedMessage.listing?.topic,
+          sources: votedMessage.sources.map(({ question, url }) => ({ question, url })),
+        },
+      }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    }).catch(() => {
+      // Feedback is only for our log: if it fails, the user doesn't need to know.
+    });
   }
 
   return (
@@ -232,6 +285,10 @@ export default function Home() {
                     <SourceCard key={source.n} source={source} />
                   ))
                 )}
+                <FeedbackButtons
+                  onVote={(vote) => handleVote(currentMessage, vote)}
+                  vote={currentMessage.vote}
+                />
               </div>
             ))
           )}
