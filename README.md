@@ -2,6 +2,19 @@
 
 A Next.js RAG app that answers questions with quotes from Lama Ole Nydahl's Q&As (`data/qa.jsonl`, 271 Q&As), using a local Chroma vector database.
 
+## Start
+![Preview](https://github.com/DanielRolfs/media/blob/main/buddhist-answers/Start.png?raw=true)
+
+## "What can I ask about?"
+![Preview](https://github.com/DanielRolfs/media/blob/main/buddhist-answers/%22What%20can%20I%20ask%20about%3F%22.png?raw=true)
+
+## "Tell me about X"
+![Preview](https://github.com/DanielRolfs/media/blob/main/buddhist-answers/%22Tell%20me%20about%20X%22.png?raw=true)
+
+## A specific question
+![Preview](https://github.com/DanielRolfs/media/blob/main/buddhist-answers/A%20specific%20question.png?raw=true)
+
+
 The Q&As come from [lama-ole-nydahl.org/questions](https://lama-ole-nydahl.org/questions/). They were fetched once (2026-09-24) through the site's WordPress REST API (`/wp-json/wp/v2/posts`, plus categories and tags), with HTML stripped and saved as one JSON object per line.
 
 Optional tasks: source citations (easy), prompt injection protection (medium), tool call result visualisation in a popover (medium), RAGAs evaluation (hard).
